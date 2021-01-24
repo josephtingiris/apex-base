@@ -30,18 +30,6 @@ if [ "${2}" == "-f" ] || [ "${2}" == "--force" ]; then
     Base_Force=1
 fi
 
-if [ -d "${1}" ] || [[ -d "${1}" && -L "${1}" ]]; then
-    if [ -d "${1}" ]; then
-        Base_Dir="${1}"
-    else
-        Base_Dir="$(readlink -e "${1}")"
-    fi
-fi
-
-if [ ${#Base_Dir} -eq 0 ]; then
-    Base_Dir="${1}"
-fi
-
 Readlink_0="$(readlink -e "${0}")"
 echo "Readlink_0    = ${Readlink_0}"
 
@@ -50,13 +38,31 @@ echo "Base_Name     = ${Base_Name}"
 
 Base_Dir_0=${Readlink_0%/*}
 Base_Dir_0=${Base_Dir_0%/*}
+
 echo "Base_Dir_0    = ${Base_Dir_0}"
+
+Base_Setup=0
+
+if [ -d "${1}" ] || [[ -d "${1}" && -L "${1}" ]]; then
+    if [ -d "${1}" ]; then
+        Base_Dir="${1}"
+    else
+        Base_Dir="$(readlink -e "${1}")"
+    fi
+    echo "Base_Dir      = ${Base_Dir} (exists)"
+else
+    Base_Setup=1
+    Base_Dir="${1}"
+    echo "Base_Dir      = ${Base_Dir} (setup)"
+fi
+
+if [ ${Base_Force} -eq 1 ]; then
+    Base_Setup=1
+fi
 
 if [ ! -x "${Base_Dir_0}/sbin/${Base_Name}" ]; then
     aborting "Base_Name depth is incorrect"
 fi
-
-echo "Base_Dir      = ${Base_Dir}"
 
 if [ "${Base_Dir}" != "${Base_Dir_0}" ]; then
     if [ -e "${1}" ]; then
@@ -72,8 +78,11 @@ if [ "${Base_Dir}" != "${Base_Dir_0}" ]; then
     fi
 fi
 
-echo
-echo "updating submodules"
-git submodule init && git submodule update && git pull
+if [ ${Base_Setup} -eq 1 ] || [ ! -f "${Base_Dir}/include/debug-bash/Debug.bash" ]; then
+    echo
+    echo "updating submodules"
+    echo
+    git submodule init && git submodule update && git pull
+fi
 
 echo && cd "${Base_Dir}" && git status
