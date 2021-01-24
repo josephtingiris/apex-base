@@ -1,0 +1,73 @@
+# This script will ...
+
+# Copyright (C) 2013-2020 Joseph Tingiris (joseph.tingiris@gmail.com)
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+# begin Apex.bash.include
+
+if [ ${#Debug} -gt 0 ]; then
+    Debug=${Debug}
+else
+    if [ ${#DEBUG} -gt 0 ]; then
+        Debug=${DEBUG}
+    else
+        Debug=0
+    fi
+fi
+
+if [ ${#Apex_Bash_Source} -eq 0 ]; then
+    Apex_Bashes=()
+    Apex_Bashes+=(Apex.bash)
+    Apex_Bashes+=(Base.bash)
+
+    Apex_Bash_Dirs=()
+    Apex_Bash_Dirs+=(/apex)
+    Apex_Bash_Dirs+=(/base)
+    Apex_Bash_Dirs+=(/usr)
+    Apex_Bash_Dirs+=(${BASH_SOURCE%/*})
+    Apex_Bash_Dirs+=(~)
+
+    for Apex_Bash_Dir in ${Apex_Bash_Dirs[@]}; do
+        while [ ${#Apex_Bash_Dir} -gt 0 ] && [ "$Apex_Bash_Dir" != "/" ]; do # search backwards
+            Apex_Bash_Source_Dirs=()
+            Apex_Bash_Source_Dirs+=("${Apex_Bash_Dir}/include/apex-bash")
+            Apex_Bash_Source_Dirs+=("${Apex_Bash_Dir}/include")
+            Apex_Bash_Source_Dirs+=("${Apex_Bash_Dir}")
+            for Apex_Bash in ${Apex_Bashes[@]}; do
+                for Apex_Bash_Source_Dir in ${Apex_Bash_Source_Dirs[@]}; do
+                    Apex_Bash_Source=${Apex_Bash_Source_Dir}/${Apex_Bash}
+
+                    if [ -r "${Apex_Bash_Source}" ]; then
+                        source "${Apex_Bash_Source}"
+                        break
+                    else
+                        unset -v Apex_Bash_Source
+                    fi
+                done
+                [ ${Apex_Bash_Source} ] && break
+            done
+            [ ${Apex_Bash_Source} ] && break
+            Apex_Bash_Dir=${Apex_Bash_Dir%/*} # search backwards
+        done
+        [ ${Apex_Bash_Source} ] && break
+    done
+fi
+
+if [ ${#Apex_Bash_Source} -eq 0 ] || [ ! -r "${Apex_Bash_Source}" ]; then
+    echo "${Apex_Bash} file not readable"
+    exit 1
+fi
+
+# end Apex.bash.include
