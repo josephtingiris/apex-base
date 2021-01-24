@@ -1,0 +1,79 @@
+#!/bin/bash
+
+aborting() {
+    echo
+    echo "aborting ... ${@}"
+    echo
+    exit 2
+}
+
+usage() {
+    echo
+    echo "$0: </apex|/base> [-f|--force]"
+    echo
+    if [ ${#1} -gt 0 ]; then
+        echo
+        echo "note: ${@}"
+        echo
+    fi
+    exit 1
+}
+
+[ ! ${1} ] && usage
+
+if [ "${1}" != "/apex" ] && [ "${1}" != "/base" ]; then
+    usage "setup must be either /apex or /base"
+fi
+
+Base_Force=0
+if [ "${2}" == "-f" ] || [ "${2}" == "--force" ]; then
+    Base_Force=1
+fi
+
+if [ -d "${1}" ] || [[ -d "${1}" && -L "${1}" ]]; then
+    if [ -d "${1}" ]; then
+        Base_Dir="${1}"
+    else
+        Base_Dir="$(readlink -e "${1}")"
+    fi
+fi
+
+if [ ${#Base_Dir} -eq 0 ]; then
+    Base_Dir="${1}"
+fi
+
+Readlink_0="$(readlink -e "${0}")"
+echo "Readlink_0    = ${Readlink_0}"
+
+Base_Name=${Readlink_0##*/}
+echo "Base_Name     = ${Base_Name}"
+
+Base_Dir_0=${Readlink_0%/*}
+Base_Dir_0=${Base_Dir_0%/*}
+echo "Base_Dir_0    = ${Base_Dir_0}"
+
+if [ ! -x "${Base_Dir_0}/sbin/${Base_Name}" ]; then
+    aborting "Base_Name depth is incorrect"
+fi
+
+echo "Base_Dir      = ${Base_Dir}"
+
+if [ "${Base_Dir}" != "${Base_Dir_0}" ]; then
+    if [ -e "${1}" ]; then
+        if [ ${Base_Force} -eq 1 ]; then
+            echo
+            echo mv "${Base_Dir}" "${Base_Dir}.$(date +%Y%m%d%H%M%S)"
+            mv "${Base_Dir}" "${Base_Dir}.$(date +%Y%m%d%H%M%S)"
+        fi
+    else
+        echo
+        echo ln -s "${Base_Dir_0}" "${Base_Dir}"
+        ln -s "${Base_Dir_0}" "${Base_Dir}"
+    fi
+fi
+
+echo
+echo "updating submodules"
+git submodule init && git submodule update && git pull
+
+echo && cd "${Base_Dir}" && git status
