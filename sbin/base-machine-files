@@ -1,0 +1,515 @@
+#!/bin/bash
+
+# begin Base.bash.include
+
+if [[ ! "${Debug}" =~ ^[0-9]+$ ]]; then
+    Debug=0
+fi
+
+Base_Bash="/apex/include/Apex.bash"
+if [ ! -r "$Base_Bash" ]; then
+    Base_Bash="/apex/include/Base.bash"
+    if [ ! -r "$Base_Bash" ]; then
+        Base_Bash="/base/include/Base.bash"
+        if [ ! -r "$Base_Bash" ]; then
+            echo "$Base_Bash not readable"
+            exit 1;
+        fi
+    fi
+fi
+source "$Base_Bash"
+
+# end Base.bash.include
+
+# Globals
+
+Test=1 # 0=true, 1=false
+
+Add_Remove=1 # false
+No=1 # false
+Yes=1 # false
+
+# Functions
+
+function aborting() {
+    printf "\naborting ... $@\n\n"
+    exit 2
+}
+
+function debugecho() {
+    if [ ${Debug} -gt 0 ]; then
+        echo $@
+    fi
+}
+
+function svnAddRemove() {
+    if [ ${#SVN} -gt 0 ]; then
+        # add
+
+        if [ ${Test} -eq 0 ]; then
+            echo "${SVN} add . --force &> /dev/null"
+        else
+            ${SVN} add . --force &> /dev/null
+        fi
+
+        # remove
+        while read svnrm; do
+            if [ ${#svnrm} -gt 0 ]; then
+                if [ ${Test} -eq 0 ]; then
+                    echo "${SVN} rm "${svnrm}" &> /dev/null"
+                else
+                    ${SVN} rm "${svnrm}" &> /dev/null
+                fi
+            fi
+        done <<< "$(Debug=0; ${SVN} status | grep ^\! | cut -c 9-)"
+
+        Add_Remove=0
+    fi
+}
+
+# Main
+
+if [ -d "/apex/machine" ]; then
+    Machine_Dir="/apex/machine"
+fi
+
+if [ ! -d "${Machine_Dir}" ]; then
+    echo "error, can't find ${Machine_Dir}"
+    exit 3
+fi
+
+declare -l Arg1
+Arg1="${1}"
+
+case "${Arg1}" in
+    n | -n | --n):
+        No=0 # true
+        ;;
+    no | -no | --no):
+        No=0 # true
+        ;;
+    y | -y | --y):
+        Yes=0 # true
+        ;;
+    yes | -yes | --yes):
+        Yes=0 # true
+        ;;
+    *):
+        if [ ${#Remote_Machine} -eq 0 ]; then
+            Remote_Machine=${1}
+        fi
+esac
+
+declare -l Arg2
+Arg2="${2}"
+
+case "${Arg2}" in
+    n | -n | --n):
+        No=0 # true
+        ;;
+    no | -no | --no):
+        No=0 # true
+        ;;
+    y | -y | --y):
+        Yes=0 # true
+        ;;
+    yes | -yes | --yes):
+        Yes=0 # true
+        ;;
+    *):
+        if [ ${#Remote_Machine} -eq 0 ]; then
+            Remote_Machine=${2}
+        fi
+esac
+
+debugecho "Debug = ${Debug}"
+debugecho
+
+debugecho "Remote_Machine = ${Remote_Machine} (Yes=${Yes}, No=${No})"
+debugecho
+
+if [ ${#Remote_Machine} -gt 0 ]; then
+    set -f
+    Hostname="${Remote_Machine}"
+else
+    Hostname=$(hostname -s 2> /dev/null)
+fi
+
+if [ ${#Hostname} -eq 0 ]; then
+    echo "error, can't determine short hostname"
+    exit 2
+fi
+
+Machine_Files_Dir="${Machine_Dir}/${Hostname}"
+
+# files in this array will be copied to ${Machine_Files_Dir}
+# full directories should end with a /
+
+Files=()
+Files+=(/boot/.luks/)
+Files+=(/etc/*.conf)
+Files+=(/etc/*.key)
+Files+=(/etc/*rc)
+Files+=(/etc/aliases)
+Files+=(/etc/alternatives/)
+Files+=(/etc/audit/rules.d/)
+Files+=(/etc/auto*)
+Files+=(/etc/auto.master.d/)
+Files+=(/etc/config/)
+Files+=(/etc/cron*)
+Files+=(/etc/crypttab)
+Files+=(/etc/crypttabs)
+Files+=(/etc/default*)
+Files+=(/etc/dnsmasq*)
+Files+=(/etc/dropbear*)
+Files+=(/etc/exports)
+Files+=(/etc/ethers)
+Files+=(/etc/fstab)
+Files+=(/etc/group)
+Files+=(/etc/hostname)
+Files+=(/etc/hosts)
+Files+=(/etc/httpd/)
+Files+=(/etc/init*)
+Files+=(/etc/iscsi/)
+Files+=(/etc/issue/)
+Files+=(/etc/firewall*)
+Files+=(/etc/haproxy*)
+Files+=(/etc/labl.d/)
+Files+=(/etc/logrotate.d/)
+Files+=(/etc/luks/)
+Files+=(/etc/modules*d/)
+Files+=(/etc/motd*)
+Files+=(/etc/multipath/)
+Files+=(/etc/multipath.conf)
+Files+=(/etc/my.cnf)
+Files+=(/etc/my.cnf.d/)
+Files+=(/etc/nagios/)
+Files+=(/etc/named.*)
+Files+=(/etc/named/)
+Files+=(/etc/NetworkManager/)
+Files+=(/etc/nrpe.d/)
+Files+=(/etc/opendkim/)
+Files+=(/etc/opendkim.conf)
+Files+=(/etc/opendmarc/)
+Files+=(/etc/opendmarc.conf)
+Files+=(/etc/openvpn/)
+Files+=(/etc/passwd)
+Files+=(/etc/php*)
+Files+=(/etc/pki/)
+Files+=(/etc/polkit-1/rules.d/)
+Files+=(/etc/postfix/)
+Files+=(/etc/profile*)
+Files+=(/etc/quagga/)
+Files+=(/etc/rc.*)
+Files+=(/etc/resolv.conf)
+Files+=(/etc/sasl*)
+Files+=(/etc/security/)
+Files+=(/etc/shadow)
+Files+=(/etc/shells)
+Files+=(/etc/ssh/)
+Files+=(/etc/ssl/)
+Files+=(/etc/sssd/sssd.conf)
+Files+=(/etc/sysctl*)
+Files+=(/etc/snmp/snmpd.conf)
+Files+=(/etc/snmp/snmptrapd.conf)
+Files+=(/etc/sudoers*)
+Files+=(/etc/sysconfig/)
+Files+=(/etc/systemd/)
+Files+=(/etc/udev/)
+Files+=(/etc/xinetd.d/)
+Files+=(/etc/yum.repos.d/)
+Files+=(/root/.acme.sh/)
+Files+=(/root/.ssh/)
+Files+=(/root/.subversion/)
+Files+=(/root/backup/)
+Files+=(/root/etc/)
+Files+=(/var/lib/iscsi/)
+Files+=(/var/spool/cron/)
+#Files+=("/tmp/space dir/"*)
+#Files+=("/tmp/space dir/")
+
+Machine_Files=()
+if [ ${#Remote_Machine} -eq 0 ]; then
+    echo
+    echo -n "Syncing local machine files from $(hostname) to ${Machine_Files_Dir} ..."
+    for File in "${Files[@]}"; do
+        File=${File// /:space:}
+        for For_File in ${File}; do
+            For_File="${For_File//:space:/ }"
+            if [ -d "${For_File}" ]; then
+                Machine_Files+=("directory:${For_File}")
+            else
+                if [ -h "${For_File}" ]; then
+                    Machine_Files+=("link:${For_File}")
+                else
+                    if [ -r "${For_File}" ]; then
+                        Machine_Files+=("file:${For_File}")
+                    fi
+                fi
+            fi
+        done
+    done
+    unset -v File
+else
+    echo
+    echo -n "Syncing remote machine files from ${Remote_Machine} to ${Machine_Files_Dir} ..."
+    Remote_Tmp_File=apex-machine-files.${Remote_Machine}
+    Local_Tmp_File=/var/tmp/${Remote_Tmp_File}
+    >${Local_Tmp_File}
+    for File in "${Files[@]}"; do
+        if [[ "${File}" =~ " " ]]; then
+            if [[ "${File}" =~ "*"$ ]]; then
+                File="${File%*\*}"
+                File="\"${File}\"*"
+            else
+                #echo "$File has a space"
+                File="\"${File}\""
+            fi
+        fi
+        echo "for For_File in ${File}; do" >> ${Local_Tmp_File}
+        echo "if [ -d \"\${For_File}\" ]; then" >> ${Local_Tmp_File}
+        echo "echo \"directory:\${For_File}\"" >> ${Local_Tmp_File}
+        echo "else" >> ${Local_Tmp_File}
+        echo "if [ -h \"\${For_File}\" ]; then" >> ${Local_Tmp_File}
+        echo "echo \"link:\${For_File}\"" >> ${Local_Tmp_File}
+        echo "else" >> ${Local_Tmp_File}
+        echo "if [ -r \"\${For_File}\" ]; then" >> ${Local_Tmp_File}
+        echo "echo \"file:\${For_File}\"" >> ${Local_Tmp_File}
+        echo "fi" >> ${Local_Tmp_File}
+        echo "fi" >> ${Local_Tmp_File}
+        echo "fi" >> ${Local_Tmp_File}
+        echo "done" >> ${Local_Tmp_File}
+    done
+    unset -v File
+
+    scp ${Local_Tmp_File} ${Remote_Machine}:/tmp &> /dev/null
+    if [ $? -eq 0 ]; then
+        while read line; do
+            Machine_Files+=("${line}")
+        done <<< $(ssh ${Remote_Machine} "sh /tmp/${Remote_Tmp_File}" 2> /dev/null)
+        unset -v line
+    fi
+fi
+
+if [ ${#Machine_Files} -eq 0 ]; then
+    aborting "couldn't find any machine files"
+fi
+
+debugecho
+
+SVN=$(type -P svn 2> /dev/null)
+if [ "${SVN}" != "/apex/bin/svn" ] && [ "${SVN}" != "/base/bin/svn" ]; then
+    unset SVN
+fi
+
+if [ ! -d "${Machine_Files_Dir}" ]; then
+    if [ ${#SVN} -gt 0 ]; then
+        cd "${Machine_Dir}"
+        if [ ${Test} -eq 0 ]; then
+            echo "${SVN} up "${Hostname}" &> /dev/null"
+            if [ ! -e "${Machine_Files_Dir}" ]; then
+                echo "${SVN} mkdir ${Machine_Files_Dir} &> /dev/null"
+            fi
+        else
+            ${SVN} up "${Hostname}" &> /dev/null
+            if [ ! -e "${Machine_Files_Dir}" ]; then
+                ${SVN} mkdir ${Machine_Files_Dir} &> /dev/null
+            fi
+        fi
+    fi
+fi
+
+if [ ! -d "${Machine_Files_Dir}" ]; then
+    if [ ${Test} -eq 0 ]; then
+        echo "mkdir -p \"${Machine_Files_Dir}\""
+    else
+        mkdir -p "${Machine_Files_Dir}"
+        if [ $? -ne 0 ]; then
+            aborting "mkdir -p '${Machine_Files_Dir}' failed"
+        fi
+    fi
+fi
+
+if [ ${#Remote_Machine} -eq 0 ]; then
+    Rsync_From=""
+else
+    Rsync_From="${Remote_Machine}:"
+fi
+
+Rsync_Args="-alEvp --delete-after"
+
+if [ ${Debug} -eq 0 ]; then
+    Rsync_Args+=" --quiet"
+fi
+
+for Machine_File in "${Machine_Files[@]}"; do
+    Directory=1 # false
+    Link=1 # false
+
+    File_Name=${Machine_File#*:}
+    File_Type=${Machine_File%:*}
+
+    if [ "${File_Name}" == "" ] || [ "${File_Name}" == "" ]; then
+        continue
+    fi
+
+    if [ "${File_Type}" == "directory" ]; then
+        Directory=0
+        Link=1
+    fi
+
+    if [ "${File_Type}" == "link" ]; then
+        Directory=1
+        Link=0
+    fi
+
+    if [ ${Debug} -eq 0 ]; then
+        if [ ${Directory} -eq 0 ]; then
+            echo -n +
+        else
+            if [ ${Link} -eq 0 ]; then
+                echo -n -
+            else
+                echo -n .
+            fi
+        fi
+    fi
+
+    debugecho "Machine_file = ${Machine_File} ($File_Type) ($File_Name)"
+
+    if [ ${Directory} -eq 0 ] && [ ${Link} -eq 1 ]; then
+        File_Name+="/"
+        File_Name=${File_Name/\/\//\/}
+
+        debugecho "Dir  = ${File_Name}"
+
+        Machine_To_Dir="${Machine_Files_Dir}/${File_Name}"
+    else
+        debugecho "File = ${File_Name}"
+
+        Machine_To_Dir="${Machine_Files_Dir}/$(dirname ${File_Name})"
+    fi
+
+    Machine_To_Dir=${Machine_To_Dir/\/\//\/}
+
+    debugecho "Machine_To_Dir = ${Machine_To_Dir}"
+
+    if [ ! -d "${Machine_To_Dir}" ]; then
+        if [ -h "${Machine_To_Dir}" ]; then
+            aborting "${Machine_To_Dir} directory found as a file"
+        else
+            if [ ${Test} -eq 0 ]; then
+                echo "mkdir -p \"${Machine_To_Dir}\""
+            else
+                mkdir -p "${Machine_To_Dir}"
+                if [ $? -ne 0 ]; then
+                    aborting "failed to mkdir ${Machine_To_Dir}"
+                fi
+            fi
+        fi
+    fi
+
+    debugecho rsync ${Rsync_Args} ${Rsync_From}"${File_Name}" "${Machine_To_Dir}"
+
+    if [ ${Test} -eq 0 ]; then
+        echo "rsync ${Rsync_Args} ${Rsync_From}\"${File_Name}\" \"${Machine_To_Dir}\""
+    else
+        rsync ${Rsync_Args} ${Rsync_From}"${File_Name}" "${Machine_To_Dir}" 2> /dev/null
+    fi
+    if [ $? -ne 0 ]; then
+        aborting "'rsync -avp ${Rsync_From}\"${File_Name}\" \"${Machine_To_Dir}\"' failed"
+    fi
+    debugecho
+
+
+    debugecho
+
+    unset -v File_Name
+    unset -v File_Type
+    unset -v Machine_To_Dir
+done
+
+echo
+
+if [ ${#Remote_Machine} -eq 0 ]; then
+    if [ -x /usr/bin/systemctl ]; then
+        if [ ${Test} -eq 0 ]; then
+            echo "systemctl list-unit-files | egrep -ve '^session-|^user-|unit files listed' | sort -u > \"${Machine_Files_Dir}/${Hostname}.list-unit-files\""
+        else
+            systemctl list-unit-files | egrep -ve '^session-|^user-|unit files listed' | sort -u > "${Machine_Files_Dir}/${Hostname}.list-unit-files"
+        fi
+    fi
+
+    if [ -x /usr/bin/rpm ]; then
+        if [ ${Test} -eq 0 ]; then
+            echo "rpm -qa | sort -u > \"${Machine_Files_Dir}/${Hostname}.packages\""
+        else
+            rpm -qa | sort -u > "${Machine_Files_Dir}/${Hostname}.packages"
+        fi
+    fi
+fi
+
+if [ ${Debug} -eq 0 ]; then
+    echo
+fi
+
+cd "${Machine_Files_Dir}"
+
+Timestamp_File="${Machine_Files_Dir}/${Hostname}.timestamp"
+if [ ! -e "${Timestamp_File}" ]; then
+    if [ ${Test} -eq 0 ]; then
+        echo "date > \"${Timestamp_File}\""
+    else
+        date > "${Timestamp_File}"
+        if [ ${#SVN} -gt 0 ]; then
+            ${SVN} info "${Timestamp_File}" &> /dev/null
+            if [ $? -ne 0 ]; then
+                ${SVN} add "${Timestamp_File}" &> /dev/null
+            fi
+        fi
+    fi
+fi
+
+if [ ${Yes} -eq 0 ]; then
+    svnAddRemove
+fi
+
+if [ ${#SVN} -gt 0 ]; then
+    Debug=0; ${SVN} status | grep .
+
+    SVN_RC=$?
+
+    if [ ${SVN_RC} -eq 0 ]; then
+        declare -l svncommit svndiff
+
+        date > "${Timestamp_File}"
+
+        if [ ${No} -eq 1 ] && [ ${Yes} -eq 1 ]; then
+            echo
+            echo -n "svn diff ? [y/n] "
+            read svndiff
+        fi
+        if [ "${svndiff:0:1}" == "y" ] || [ ${Yes} -eq 0 ]; then
+            echo
+            ${SVN} status | egrep -e "^M|^ M" | cut -c 9- | xargs ${SVN} diff --force
+        fi
+
+        if [ ${No} -eq 1 ] && [ ${Yes} -eq 1 ]; then
+            echo
+            echo -n "svn commit ? [y/n] "
+            read svncommit
+        fi
+        if [ "${svncommit:0:1}" == "y" ] || [ ${Yes} -eq 0 ]; then
+            if [ ${Add_Remove} -ne 0 ]; then
+                svnAddRemove
+            fi
+            echo
+            if [ ${Test} -eq 0 ]; then
+                echo "${SVN} commit -m \"$(logname)@$HOSTNAME:$(pwd) $(basename $0)\""
+            else
+                ${SVN} commit -m "$(logname)@$HOSTNAME:$(pwd) $(basename $0)"
+            fi
+        fi
+        echo
+    fi
+fi
