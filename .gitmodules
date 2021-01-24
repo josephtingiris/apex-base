@@ -1,0 +1,6 @@
+[submodule "include/debug-bash"]
+	path = include/debug-bash
+	url = git@github.com:josephtingiris/debug-bash
+[submodule "include/ip-bash"]
+	path = include/ip-bash
+	url = git@github.com:josephtingiris/ip-bash
