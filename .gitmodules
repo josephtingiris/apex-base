@@ -4,3 +4,6 @@
 [submodule "include/ip-bash"]
 	path = include/ip-bash
 	url = git@github.com:josephtingiris/ip-bash
+[submodule "include/debug-php"]
+	path = include/debug-php
+	url = git@github.com:josephtingiris/debug-php
