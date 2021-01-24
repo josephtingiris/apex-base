@@ -1,0 +1,27 @@
+# begin base.php.include
+
+$PATH="/bin:/usr/bin:/sbin:/usr/sbin";
+
+$INCLUDE_FILE="base.php";
+$INCLUDE_FOUND=0;
+$INCLUDE_PATHS=array(dirname(__FILE__), getcwd());
+foreach ($INCLUDE_PATHS as $INCLUDE_PATH) {
+    if ($INCLUDE_FOUND == 1) break;
+    while(strlen($INCLUDE_PATH) > 0) {
+        if ($INCLUDE_PATH == ".") $INCLUDE_PATH=getcwd();
+        if ($INCLUDE_PATH == "/") break;
+        if (is_readable($INCLUDE_PATH."/include/".$INCLUDE_FILE) && !is_dir($INCLUDE_PATH."/include/".$INCLUDE_FILE)) {
+            $INCLUDE_FOUND=1;
+            require_once($INCLUDE_PATH."/include/".$INCLUDE_FILE);
+            Debug("sourced $INCLUDE_PATH/include/$INCLUDE_FILE",500);
+            break;
+        } else {
+            $INCLUDE_PATH=dirname($INCLUDE_PATH);
+        }
+    }
+}
+if ($INCLUDE_FOUND != 1) { echo "$INCLUDE_FILE file not found\n"; exit(1); }
+if (empty($GLOBALS["BASE_INCLUDE"])) { echo "$INCLUDE_FILE invalid\n"; exit(1); }
+unset($INCLUDE_FILE, $INCLUDE_PATH);
+
+# end base.php.include
