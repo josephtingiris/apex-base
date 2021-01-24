@@ -1,0 +1,47 @@
+#!/bin/bash
+
+# 20161118, jtingiris
+
+Base_Repo_Dir="/var/svn/repo/base"
+Base_Repo_Log="/var/log/base-svnserve.log"
+
+if [ "$Base_User" == "" ]; then
+    if [ "$Base_User" == "" ]; then
+        Base_User=$USER
+    fi
+    if [ "$Base_User" == "" ]; then
+        Base_User=$LOGNAME
+    fi
+    if [ "$Base_User" == "root" ]; then
+        if [ "$SSH_CLIENT" != "" ]; then
+            Base_User="root@$SSH_CLIENT"
+        else
+            Base_User="root@$HOSTNAME"
+        fi
+    fi  
+    if [ "$Base_User" == "" ]; then
+        Base_User="anonymous"
+    fi
+fi
+
+umask 002 # 660
+
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+
+# call the 'real' svnserve, also passing in the default repo location
+/usr/bin/svnserve -t -r "$Base_Repo_Dir" --tunnel-user="$Base_User" \
+    --memory-cache-size 1024 \
+    --cache-txdeltas yes \
+    --cache-fulltexts yes
+
+# if svnserve changes the group ownership to anything other than apache, change it back
+if [ ! -f "$Base_Repo_Log" ]; then
+    touch "$Base_Repo_Log"
+    touch "$Base_Repo_Log"
+    chgrp apache "$Base_Repo_Log"
+    chmod 660 "$Base_Repo_Log"
+fi
+
+if [ -w "$Apex_Repo_Log" ]; then
+    echo "`date`: $USER : $SSH_CLIENT : $?" >> "$Base_Repo_Log"
+fi
