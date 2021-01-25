@@ -6,7 +6,7 @@
 
 # For coding conventions, organization, standards, & references, see: /base/README
 
-MAIL_RECIPIENTS="dev@ops.base8tech.com"
+MAIL_RECIPIENTS="root"
 
 PATH=/bin:/usr/bin:/sbin:/usr/sbin
 
