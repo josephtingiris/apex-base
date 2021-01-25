@@ -1,0 +1,51 @@
+# base-httpd.conf.d ##CONFIG## template input ##CONFIG_FILE## md5sum ##CONFIG_FILE_MD5##
+<VirtualHost *:443>
+    ServerName ##SERVER_NAME##
+    ##SERVER_ALIASES##
+
+    DocumentRoot "##DOCUMENT_ROOT##"
+
+    SetEnv FOLDER_NAME ##SERVER_NAME##
+
+    ##ACCESS_CONTROL_LIST##
+
+    <Directory "##DOCUMENT_ROOT##">
+        Options Indexes FollowSymLinks
+        AllowOverride All
+        Order deny,allow
+        Require all granted
+    </Directory>
+
+    # cache all static assets for 1 month
+    <filesMatch ".(ico|jpg|jpeg|png|gif|js|css|swf|wav|ogg|mp3|aiff)$">
+        Header set Cache-Control "max-age=2628000, public"
+    </filesMatch>
+
+    ##VHOSTS_CUSTOM_443##
+
+    TraceEnable off
+    ServerSignature off
+
+    SSLEngine on
+
+    SSLProtocol all -SSLv2 -SSLv3
+    SSLHonorCipherOrder on
+    SSLCipherSuite "EECDH+ECDSA+AESGCM EECDH+aRSA+AESGCM EECDH+ECDSA+SHA384 EECDH+ECDSA+SHA256 EECDH+aRSA+SHA384 EECDH+aRSA+SHA256 EECDH+aRSA EECDH EDH+aRSA !aNULL !eNULL !LOW !3DES !MD5 !EXP !PSK !SRP !DSS !RC4"
+
+    ##CERTIFICATE_FILE##
+    ##CERTIFICATE_KEYFILE##
+    ##CERTIFICATE_CHAINFILE##
+
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css text/javascript application/javascript
+
+    DeflateFilterNote Input instream
+    DeflateFilterNote Output outstream
+    DeflateFilterNote Ratio ratio
+
+    CustomLog /var/log/httpd/##PREFIX##.access.443.log combined
+    ErrorLog /var/log/httpd/##PREFIX##.error.443.log
+
+    # see: http://httpd.apache.org/docs/current/mod/mod_log_config.html#formats
+    LogFormat "%t,%v,%V,%A:%p,%k,%X,%h,%{X-Forwarded-For}i,%l,%u,\"%r\",%>s,%b,\"%{User-agent}i\",\"%{Referer}i -> %U\",\"%I/%O -> %{outstream}n/%{instream}n (%{ratio}n%%)\",%Dms" custom
+    CustomLog /var/log/httpd/##ACCOUNT##.443.log custom
+</VirtualHost>

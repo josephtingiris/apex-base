@@ -1,8 +1,27 @@
+# environment specific
+aliases*
+apex-backup*
+base*conf
+cron*
+labl.d
+motd
+openvpn
+opt
+php.ini
+postfix
+NetworkManager
+httpd.conf.d*
+!httpd.conf.d.public.httpsonly
+!httpd.conf.d.public.httpsonly.norewrite
+
+# base installation specific
 account_name
-base-account-name
-domain_name
-base-domain-name
 company_name
-base-company-name
+domain_name
 privacy_notice
+base-account-name
+base-company-name
+base-domain-name
 base-privacy_notice
+base-slack-url
+base-svnserve-dir

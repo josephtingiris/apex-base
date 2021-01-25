@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<zone target="ACCEPT">
+  <short>Trusted</short>
+  <description>Only private networks are accepted.</description>
+
+  <source address="127.0.0.1/32"/>
+  <source address="192.168.0.0/16"/>
+  <source address="172.16.0.0/12"/>
+  <source address="10.0.0.0/8"/>
+  <masquerade/>
+</zone>

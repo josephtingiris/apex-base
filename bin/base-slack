@@ -1,0 +1,320 @@
+#!/bin/bash
+
+# This script will ... send messages to slack channels from the cli
+
+# caveats
+# * if you want to cat, tail, grep, etc. a file then you need to pass the output through sed to replace newlines properly, or slack wont print them
+# i.e. slack -c \#testing -i eyes -m "\`\`\`$(grep INFO /var/log/messages | tail | sed -e ':a;N;$!ba;s/\n/\\\\n/g')\`\`\`")  # note the sed is REQUIRED as the final output
+
+Develop=1 # 0=on, 1=off
+
+# begin Apex.bash.include
+
+if [ "$Debug" == "" ]; then
+    Debug=0
+fi
+
+Apex_Bashes="/apex/include/Apex.bash /base/include/Base.bash"
+for Apex_Bash in $Apex_Bashes; do
+    if [ -r "$Apex_Bash" ]; then
+        source "$Apex_Bash"
+        break
+    fi
+done
+
+if [ ! -r "$Apex_Bash" ]; then
+    echo "$Apex_Bash not readable"
+    exit 1;
+fi
+
+# end Apex.bash.include
+
+# Global_Variables
+
+if [ -r "${Apex_Dir}/etc/base-slack-url" ]; then
+    source "${Apex_Dir}/etc/base-slack-url"
+else
+    Default_Channels="#automation"
+    Default_Icon="autobot"
+    Default_Name="Autobot"
+    Default_Url=""
+fi
+
+# explicit declarations
+
+declare -x Version="0.1";
+
+declare -i Return_Code=0
+
+# functionNames
+
+function exampleFunction() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    local example_arg="$1"
+    local example_variable="example variable"
+
+    debugValue example_variable 2
+
+    echo "example_arg=$example_arg, example_variable=$example_variable"
+
+    # end function logic
+
+    debugFunction $@
+
+}
+
+# Validation Logic
+
+dependency "date"
+
+# typically, upgrade before optionArguments, begin, etc
+
+# upgrade "$0" "/apex/bin /usr/local/bin"
+
+# optionArguments Logic
+
+# add usage help to the Apex_Usage array (before usage() is called for the first time [via optionArguments])
+
+Apex_Usage+=("-c | --channel <value(s)> = [optional] send message <value> to one or more slack channel <value(s)>")
+Apex_Usage+=("=Default = $Default_Channels")
+Apex_Usage+=("") # blank link; seperator
+Apex_Usage+=("-n | --name <value(s)> = [optional] use name <value> for the message sent to slack")
+Apex_Usage+=("=Default = $Default_Name")
+Apex_Usage+=("") # blank link; seperator
+Apex_Usage+=("-i | --icon <value(s)> = [optional] use icon <value> for the message sent to channel <value(s)>")
+Apex_Usage+=("=Default = $Default_Icon")
+Apex_Usage+=("") # blank link; seperator
+Apex_Usage+=("-u | --url <value(s)> = [optional] use url <value> for the message sent to slack")
+Apex_Usage+=("=Default = $Default_Url")
+Apex_Usage+=("") # blank link; seperator
+Apex_Usage+=("-m | --message <value> = [required] the message to send to the slack channel <value(s)>")
+Apex_Usage+=("") # blank link; seperator
+
+#Apex_Usage+=("-m | --mutiple <value(s)> = supports an argument with one or more <value(s)>")
+#Apex_Usage+=("-n | --multiple-optional [value(s)] = supports an argument with or without one or more [value(s)]")
+#Apex_Usage+=("-o | --one = supports only one argument without a value")
+#Apex_Usage+=("-s | --single <value> = supports only one argument with a single <value>")
+#Apex_Usage+=("-t | --single-optional [value(s)] = supports only one argument with or without a [value]")
+#Apex_Usage+=("") # blank link; seperator
+#Apex_Usage+=("-e | --example <value> = use the given example value")
+#Apex_Usage+=("=more help for the example flag")
+
+# call the optionArguments function (to process common options, i.e. --debug, --help, --usage, --yes, etc)
+
+optionArguments $@
+
+# expand upon the optionArguments function (careful, same named switches will be processed twice)
+
+# for each cli option (argument), evaluate them case by case, process them, and shift to the next
+
+declare -i Channels_Flag=1 # default off
+declare -i Icon_Flag=1 # default off
+declare -i Message_Flag=1 # default off
+declare -i Name_Flag=1 # default off
+declare -i Url_Flag=1 # default off
+
+declare -i Example_Flag=1 # 0=true/on/yes, 1=false/off/no
+
+declare -i Multiple_Flag=1 # default off
+declare -i Multiple_Optional_Flag=1 # default off
+declare -i One_Flag=1 # default off
+declare -i Single_Flag=1 # default off
+declare -i Single_Optional_Flag=1 # default off
+
+declare -i Restart_Flag=1 # default off
+declare -i Start_Flag=1 # default off
+declare -i Status_Flag=1 # default off
+declare -i Stop_Flag=1 # default off
+
+declare -i Option_Arguments_Index=0
+declare -i Option_Arguments_Shift=0
+
+for Option_Argument in ""${Option_Arguments[@]}; do
+
+    if [ $Option_Arguments_Shift -eq 1 ]; then
+        ((Option_Arguments_Index++))
+        Option_Arguments_Shift=0
+        continue
+    fi
+
+    Option_Argument_Next="${Option_Arguments[$Option_Arguments_Index+1]}"
+
+    case "$Option_Argument" in
+
+            # supports an argument with one or more value(s)
+            -c | --c | -channel | --channel)
+            Option_Argument_Var="Channels"
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Channels+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Channels="$(listUnique "$Channels")"
+            if [ "$Channels" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Channels_Flag=0
+            debugValue Channels_Flag 2 "$Option_Argument flag was set [$Channels]"
+            ;;
+
+            # supports only one argument with a single value
+            -i | --i | -icon | --icon)
+            Option_Argument_Var="Icon"
+            if [ $Icon_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Icon+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Icon="$(listUnique "$Icon")"
+            if [ "$Icon" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Icon_Flag=0
+            debugValue Icon_Flag 2 "$Option_Argument flag was set [$Icon]"
+            ;;
+
+            # supports only one argument with a single value
+            -n | --n | -name | --name)
+            Option_Argument_Var="Name"
+            if [ $Name_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Name+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Name="$(listUnique "$Name")"
+            if [ "$Name" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Name_Flag=0
+            debugValue Name_Flag 2 "$Option_Argument flag was set [$Name]"
+            ;;
+
+            # supports only one argument with a single value
+            -m | --m | -message | --message)
+            Option_Argument_Var="Message"
+            if [ $Message_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Message+=" $(echo ${Option_Argument_Next})"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            if [ "$Message" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Message_Flag=0
+            debugValue Message_Flag 2 "$Option_Argument flag was set [$Message]"
+            ;;
+
+            # supports only one argument with a single value
+            -u | --u | -url | --url)
+            if [ $Url_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Url+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Url="$(listUnique "$Url")"
+            if [ "$Url" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Url_Flag=0
+            debugValue Url_Flag 2 "$Option_Argument flag was set [$Url]"
+            ;;
+
+        *)
+            # this appends any erroneous arguments to the previous match; works but needs work
+            debugValue Option_Argument 22 "$Option_Argument_Var"
+            if [ "$Option_Argument_Var" != "" ]; then
+                declare $Option_Argument_Var+=" $(echo $Option_Argument)"
+            fi
+
+            # unsupported arguments
+            if [ "$Option_Argument" != "" ] && [ $Option_Arguments_Shift -ne 0 ]; then
+                echo "unsupported argument '$Option_Argument'"
+                exit 2
+            fi
+            ;;
+
+        esac
+
+        ((Option_Arguments_Index++))
+    done
+    unset Option_Argument_Next Option_Arguments_Index Option_Arguments_Shift
+
+    # e.g., if there are no arguments, echo a usage message and/or exit
+
+    if [ $Apex_Arguments_Count -eq 0 ]; then usage; fi
+    if [ $Apex_Arguments_Count -eq 1 ] && [ $Debug_Flag -ne 1 ]; then usage; fi
+    if [ $Apex_Arguments_Count -eq 2 ] && [ $Debug_Flag -ne 1 ] && [ "$Debug" != "" ]; then usage; fi
+    if [ "$Message" == "" ]; then usage "must specify a --message"; fi
+
+    # Main Logic
+
+    begin
+
+    if [ "$Channels" == "" ]; then
+        Channels=$Default_Channels
+    fi
+
+    if [ "$Icon" == "" ]; then
+        Icon=$Default_Icon
+    fi
+
+    if [ "$Name" == "" ]; then
+        Name=$Default_Name
+    fi
+
+    if [ "$Url" == "" ]; then
+        Url=$Default_Url
+    fi
+
+    if [ "$Message" != "" ]; then
+        echo "Channels   = $Channels"
+        echo "Icon       = $Icon"
+        echo "Name       = $Name"
+        echo "Message    = $Message"
+        echo "Slack URL  = $Url"
+
+        for Channel in $Channels; do
+            Slack_Payload="payload={\"channel\": \"${Channel}\", \"username\": \"${Name}\", \"text\": \""
+            Slack_Payload+="$(echo -e ${Message} | sed -e "s#\"#\\\\\"#g" -e ':a;N;$!ba;s/\r/\\n/g')"
+            Slack_Payload+="\", \"icon_emoji\": \":$Icon:\"}"
+            if [ $Develop -eq 0 ]; then
+                echo curl -X POST --data-urlencode "$Slack_Payload" $Url
+            else
+                curl -X POST --data-urlencode "$Slack_Payload" $Url 2> /dev/null
+            fi
+        done
+
+    fi
+
+end $Return_Code

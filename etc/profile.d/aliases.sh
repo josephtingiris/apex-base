@@ -1,0 +1,8 @@
+alias cl='cd;clear'
+alias dmesg='dmesg -T'
+alias h='history'
+alias l='ls -lFhart'
+alias ls='ls --color=tty'
+alias root='sudo su -'
+alias s='source /etc/profile'
+alias vi='vim'

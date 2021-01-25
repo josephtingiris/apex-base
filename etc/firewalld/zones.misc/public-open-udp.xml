@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<zone>
+  <short>Public</short>
+  <description>For use in public areas. You do not trust the other computers on networks to not harm your computer. Only selected incoming connections are accepted.</description>
+
+  <!-- These MUST be open to the public for VoIP Innovations to work because they reinvite & RTP comes from a variety of providers -->
+  <port protocol="udp" port="1024-65535"/>
+</zone>

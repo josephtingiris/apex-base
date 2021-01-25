@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<direct>
+  <passthrough ipv="ipv4">-D INPUT -j INPUT_direct</passthrough>
+  <passthrough ipv="ipv4">-D FORWARD -j FORWARD_direct</passthrough>
+  <passthrough ipv="ipv4">-I INPUT 1 -j INPUT_direct</passthrough>
+  <passthrough ipv="ipv4">-I FORWARD 1 -j FORWARD_direct</passthrough>
+  <passthrough ipv="ipv4">-I OUTPUT 1 -j OUTPUT_direct</passthrough>
+  <passthrough ipv="ipv4">-I FORWARD -i br0 -j ACCEPT</passthrough>
+  <passthrough ipv="ipv4">-I FORWARD -o br0 -j ACCEPT</passthrough>
+  <passthrough ipv="ipv6">-D INPUT -j INPUT_direct</passthrough>
+  <passthrough ipv="ipv6">-D OUTPUT -j OUTPUT_direct</passthrough>
+  <passthrough ipv="ipv6">-I INPUT 1 -j INPUT_direct</passthrough>
+  <passthrough ipv="ipv6">-I FORWARD 1 -j FORWARD_direct</passthrough>
+  <passthrough ipv="ipv6">-I OUTPUT 1 -j OUTPUT_direct</passthrough>
+  <passthrough ipv="ipv6">-I FORWARD -i br0 -j ACCEPT</passthrough>
+  <passthrough ipv="ipv6">-I FORWARD -o br0 -j ACCEPT</passthrough>
+</direct>

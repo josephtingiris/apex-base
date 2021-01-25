@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<zone>
+  <short>Public</short>
+  <description>For squid.</description>
+
+  <port protocol="tcp" port="3128"/>
+</zone>
