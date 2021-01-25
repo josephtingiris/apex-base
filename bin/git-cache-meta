@@ -1,0 +1,28 @@
+#!/bin/sh -e
+# git-cache-meta -- file meta data caching for possible use with
+# git-bundle, git-fast-export, git-archive, hooks, as a simple
+# alternative to etckeeper, metastore, setgitperms. Requires GNU Find.
+#
+# original version by jidanni: https://marc.info/?l=git&m=123146944027390
+# some modifications borrowed from this thread: https://gist.github.com/andris9/1978266
+# features:
+# - works only on MacOS X with GNU find (brew install findutils)
+# - save all files and directories metadata except access time
+
+: ${GIT_CACHE_META_FILE=.git_cache_meta}
+case $@ in
+    --store|--stdout)
+    case $1 in --store) exec > $GIT_CACHE_META_FILE; esac
+    # directories
+    git ls-tree --name-only -rd $(git write-tree) | xargs -I NAME find ./NAME -maxdepth 0 \
+        \( -printf "chown -h '%u':'%g' '%p'\n" \) , \
+        \( \! -type l -printf "chmod %#m '%p'\n" \) , \
+        \( -printf "touch -hct '%TY%Tm%Td%TH%TM' '%p'\n" \)
+    # files
+    git ls-files | xargs -I NAME find ./NAME \
+        \( -printf "chown -h '%u':'%g' '%p'\n" \) , \
+        \( \! -type l -printf "chmod %#m '%p'\n" \) , \
+        \( -printf "touch -hct '%TY%Tm%Td%TH%TM' '%p'\n" \);;
+    --apply) sh -e ${GIT_CACHE_META_FILE};;
+    *) 1>&2 echo "Usage: $0 --store|--stdout|--apply"; exit 1;;
+esac
