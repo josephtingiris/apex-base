@@ -1,9 +1,11 @@
 # environment specific
 aliases*
+apex-backup*
 base*conf
 cron*
 labl.d
 motd
+openvpn
 opt
 php.ini
 postfix
