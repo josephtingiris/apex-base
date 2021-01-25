@@ -10,7 +10,7 @@ for Top_Dir in ${Top_Dirs[@]}; do
 
     for Infinity_Dir in ${Infinity_Dirs[@]}; do
         if [ -d "/${Top_Dir}/${Infinity_Dir}" ]; then
-            if svn info "/${Top_Dir}/${Infinity_Dir}" | grep ^Depth &> /dev/nll; then
+            if svn info "/${Top_Dir}/${Infinity_Dir}" | grep ^Depth &> /dev/null; then
                 echo "Updating '/${Top_Dir}/${Infinity_Dir}' depth ..."
                 svn up "/${Top_Dir}/${Infinity_Dir}" --set-depth=infinity &> /dev/null
                 Svn_Rc=$?
