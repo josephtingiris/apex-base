@@ -16,11 +16,12 @@ httpd.conf.d*
 
 # base installation specific
 account_name
-base-account-name
-domain_name
-base-domain-name
 company_name
-base-company-name
+domain_name
 privacy_notice
+base-account-name
+base-company-name
+base-domain-name
 base-privacy_notice
+base-slack-url
 base-svnserve-dir
