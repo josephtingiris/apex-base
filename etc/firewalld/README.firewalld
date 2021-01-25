@@ -1,0 +1,4 @@
+!! DO ***NOT*** COPY THIS DIRECTORY DIRECTLY TO /etc/firewalld !!
+
+This directory contains various firewalld related files that can be cherry picked & put in /etc/firewalld as needed.
+

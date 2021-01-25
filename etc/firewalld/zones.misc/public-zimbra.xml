@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<zone>
+  <short>Public</short>
+  <description>For Zimbra.</description>
+
+  <port protocol="tcp" port="25"/>
+  <port protocol="tcp" port="80"/>
+  <port protocol="tcp" port="443"/>
+  <port protocol="tcp" port="465"/>
+  <port protocol="tcp" port="587"/>
+  <port protocol="tcp" port="993"/>
+  <port protocol="tcp" port="995"/>
+
+</zone>
