@@ -1,0 +1,593 @@
+#!/bin/bash
+
+# This script will ... convert the network-scripts ifcfg-* & route-* files to static configs
+
+# For coding conventions, organization, standards, & references, see: /base/README
+
+# GLOBAL_VARIABLES
+
+# begin base.bash.include
+
+if [ "$DEBUG" == "" ]; then
+    DEBUG=0
+fi
+
+PATH_SHELL=$PATH
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+
+INCLUDE_FILE="base.bash"
+INCLUDE_FOUND=0
+INCLUDE_PATHS=("$(pwd)" "$(dirname $0)")
+
+for ((INCLUDE_COUNTER=0; INCLUDE_COUNTER < ${#INCLUDE_PATHS[@]}; INCLUDE_COUNTER++)); do
+
+    INCLUDE_PATH=${INCLUDE_PATHS[$INCLUDE_COUNTER]}
+
+    if [ $INCLUDE_FOUND -eq 1 ]; then break; fi
+
+    while [ ! -z "$INCLUDE_PATH" ]; do
+        if [ "$INCLUDE_PATH" == "." ]; then INCLUDE_PATH=$(pwd -L .); fi
+        if [ "$INCLUDE_PATH" == "/" ]; then break; fi
+        if [ -r "$INCLUDE_PATH/include/$INCLUDE_FILE" ] && [ ! -d "$INCLUDE_PATH/include/$INCLUDE_FILE" ]; then
+            INCLUDE_FOUND=1
+            source "$INCLUDE_PATH/include/$INCLUDE_FILE"
+            Debug "sourced $INCLUDE_PATH/include/$INCLUDE_FILE" 100
+            break
+        else
+            INCLUDE_PATH=$(dirname "$INCLUDE_PATH")
+        fi
+    done
+done
+if [ $INCLUDE_FOUND -ne 1 ]; then echo "$INCLUDE_FILE file not found"; exit 1; fi
+if [ "$BASE_INCLUDE" == "" ]; then echo "$INCLUDE_FILE file invalid"; exit 1; fi
+unset INCLUDE_COUNTER INCLUDE_PATH INCLUDE_FILE
+
+# end base.bash.include
+
+# explicit declarations
+
+declare -x DEFAULT_DATE=`date +%Y%m%d`
+
+declare -i YES_FLAG=0
+
+declare -i RC=0
+
+declare -x VERSION="0.1";
+
+# Function_Names
+
+function Usage() {
+
+    Debug_Function $@
+
+    local note="$1"
+
+    # begin function logic
+
+    echo
+    echo "usage: $0 <options>"
+    echo
+    echo "options:"
+    echo
+    # these are handled in base.bash; useful to know though ...
+    echo "  -D | --debug [level]           = print debug messages (less than) [level]"
+    echo "  -H | --help                    = print this message"
+    echo "  -V | --version                 = print version"
+    echo
+    echo "  -c | --copy                    = copy /etc/sysconfig/network-scripts files to /base/machine/$HOSTNAME/etc/sysconfig/network-scripts"
+    echo
+    echo "  -i | --interactive             = run interactively"
+    echo
+    # these must be handled in this script; please keep usage messages accurate
+    echo "  -y | --yes                     = answer 'yes' to all questions (automate)"
+    echo
+
+    if [ "$note" != "" ]; then
+        echo "NOTE: $note"
+        echo
+    fi
+
+    # end function logic
+
+    Debug_Function $@
+
+    Stop 1
+
+}
+
+# Validation Logic
+
+# typically, Upgrade before Options, Start, etc
+
+# Options Logic
+
+# call the base Options function (to process --debug, -debug, --help, -help, --usage, -usage, --verbose, -verbose)
+Options $@
+
+# expand upon the base Options function (careful, same named switches will be processed twice)
+
+# for each command line argument, evaluate them case by case, process them, and shift to the next
+
+INTERACTIVE_FLAG=0
+COPY_FLAG=0
+
+for ((ARGUMENT=1; ARGUMENT <= $ARGUMENTS_TOTAL; ARGUMENT++)); do
+    case "$1" in
+    -c | --copy | -copy)
+        COPY_FLAG=1
+        ;;
+    -i | --interactive | -interactive)
+        INTERACTIVE_FLAG=1
+        ;;
+    -y | --yes | -yes)
+        YES_FLAG=1
+        ;;
+    *)
+        # unknown flags
+        if [ "$1" != "" ] && [ $OPTION -eq 0 ]; then
+            echo "unknown flag '$1'"
+            Stop 2 # not absolutely necessary, but does enforce proper usage
+        fi
+        ;;
+    esac
+    shift
+done
+
+#echo "ARGUMENTS=$ARGUMENTS"
+
+# e.g., if there are no arguments, echo a usage message and/or exit
+if [ $ARGUMENTS_TOTAL -eq 0 ]; then Usage; fi
+if [ $ARGUMENTS_TOTAL -eq 1 ] && [ $DEBUG_FLAG -ne 0 ]; then Usage; fi
+if [ $ARGUMENTS_TOTAL -eq 2 ] && [ $DEBUG_FLAG -ne 0 ] && [ "$DEBUG" != "" ]; then Usage; fi
+
+# Main Logic
+
+Start
+
+# do something
+
+if [ ! -d /etc/sysconfig/network-scripts ]; then
+    Aborting "/etc/sysconfig/network-scripts directory not found"
+fi
+
+Question "this script makes changes to the network-scripts; are you SURE you want to continue"
+if [ "$QUESTION_FLAG" -eq 0 ]; then
+    Aborting "nothing done"
+fi
+
+if [ $COPY_FLAG -eq 1 ] || [ $INTERACTIVE_FLAG -eq 1 ] || [ $YES_FLAG -eq 1 ]; then
+
+    Question "copy existing /etc/sysconfig/network-scripts to /base/machine/$HOSTNAME/etc/systeconfig/network-scripts"
+
+    if [ "$QUESTION_FLAG" -eq 1 ]; then
+
+        echo
+        echo "# copying existing /etc/sysconfig/network-scripts to /base/machine/$HOSTNAME/etc/sysconfig/network-scripts ..."
+
+        mkdir -p "/base/machine/$HOSTNAME/etc/sysconfig/network-scripts"
+        if [ $? -ne 0 ]; then
+            Aborting "/base/machine/$HOSTNAME/etc/sysconfig/network-scripts mkdir failed"
+        fi
+
+        if [ "$(ls -1 /etc/sysconfig/network-scripts/ifcfg-* 2> /dev/null)" ]; then
+            cp /etc/sysconfig/network-scripts/ifcfg-* /base/machine/$HOSTNAME/etc/sysconfig/network-scripts
+
+            if [ $? -ne 0 ]; then
+                Aborting "/base/machine/$HOSTNAME/etc/sysconfig/network-scripts/ifcfg-* failed to copy"
+            fi
+        fi
+
+        if [ "$(ls -1 /etc/sysconfig/network-scripts/route-* 2> /dev/null)" ]; then
+            cp /etc/sysconfig/network-scripts/route-* /base/machine/$HOSTNAME/etc/sysconfig/network-scripts
+
+            if [ $? -ne 0 ]; then
+                Aborting "/base/machine/$HOSTNAME/etc/sysconfig/network-scripts/route-* failed to copy"
+            fi
+        fi
+    fi
+
+fi
+
+SCRIPT_DIR="/etc/sysconfig/network-scripts"
+if [ -d "/base/machine/$HOSTNAME/etc/sysconfig/network-scripts" ]; then
+    Question "modify scripts in /base/machine/${HOSTNAME}${SCRIPT_DIR} instead of ${SCRIPT_DIR}"
+
+    if [ "$QUESTION_FLAG" -eq 1 ]; then
+        SCRIPT_DIR="/base/machine/${HOSTNAME}${SCRIPT_DIR}"
+    fi
+fi
+
+echo
+echo "# using network-scripts in ${SCRIPT_DIR} ..."
+echo
+
+INTERFACES=$(ip -o a s | grep scope\ global | egrep -ve 'peer' | awk '{print $2}' | sort -u)
+
+for INTERFACE in $INTERFACES; do
+
+    # for each interface, initialize these as empty first
+    AUTOCONNECT_PRIORITY=""
+    BOOTPROTO=""
+    BRIDGE=""
+    BONDING_OPTS=""
+    DEFROUTE=""
+    DEVICE=""
+    HWADDR=""
+    INTERFACE_IP=""
+    INTERFACE_MAC=""
+    INTERFACE_NETMASK=""
+    INTERFACE_TYPE=""
+    IPADDR=""
+    IPV4_FAILURE_FATAL=""
+    IPV6=""
+    IPV6INIT=""
+    IPV6_AUTOCONF=""
+    IPV6_DEFROUTE=""
+    IPV6_PEERDNS=""
+    IPV6_PEERROUTES=""
+    IPV6_FAILURE_FATAL=""
+    GATEWAY=""
+    NAME=""
+    NETMASK=""
+    NM_CONTROLLED=""
+    NOZEROCONF=""
+    ONBOOT=""
+    PEERDNS=""
+    PEERROUTES=""
+    ROUTE=""
+    SCRIPT_IFCFG=""
+    SCRIPT_ROUTE=""
+    TYPE=""
+
+    Question "modify scripts in /base/machine/${HOSTNAME}${SCRIPT_DIR} for $INTERFACE"
+
+    if [ "$QUESTION_FLAG" -eq 0 ]; then
+        continue
+    fi
+
+    INTERFACE_MAC=$(ip link show dev $INTERFACE | grep link/ether | awk '{print $2}' | grep :)
+    Debug_Variable INTERFACE_MAC 7
+
+    if [ "$INTERFACE_MAC" == "" ]; then
+        Warning "invalid mac address for $INTERFACE"
+        continue
+    fi
+
+    INTERFACE_IP=$(ip addr show dev $INTERFACE | grep inet\  | awk '{print $2}' | awk -F\/ '{print $1}' | grep \.)
+    Debug_Variable INTERFACE_IP 7
+
+    if [ "$INTERFACE_IP" == "" ]; then
+        Warning "invalid ip address for $INTERFACE"
+        continue
+    fi
+
+    # empty the tmp files
+    > "/tmp/ifcfg-${INTERFACE}.tmp"
+    > "/tmp/route-${INTERFACE}.tmp"
+
+    # these should go in route-$INTERFACE
+    let REPLACE_ROUTE=0
+
+    while read ROUTE; do
+        if [ "$ROUTE" == "" ]; then
+            continue;
+        fi
+
+        if [ "$GATEWAY" == "" ]; then
+            GATEWAY=$(echo "$ROUTE" | grep ^default | awk '{print $NF}')
+            if [ "$GATEWAY" != "" ]; then
+                Debug_Variable GATEWAY 8 $INTERFACE
+                continue
+            fi
+        fi
+
+        let REPLACE_ROUTE=1
+        echo "$ROUTE dev $INTERFACE" >> /tmp/route-${INTERFACE}.tmp
+
+    done <<< "$(ip route show dev $INTERFACE | grep -v scope\ link | grep vi | awk '{print $1" "$2" "$3}')"
+    unset ROUTE
+
+    if [ $REPLACE_ROUTE -eq 1 ] && [ -s "/tmp/route-${INTERFACE}.tmp" ]; then
+        SCRIPT_ROUTE="${SCRIPT_DIR}/route-${INTERFACE}"
+        if [ -f "$SCRIPT_ROUTE" ]; then
+            diff -q "$SCRIPT_ROUTE" "/tmp/route-${INTERFACE}.tmp" &> /dev/null
+            if [ $? -eq 0 ]; then
+                echo "# $INTERFACE [$INTERFACE_MAC] $SCRIPT_ROUTE -> OK"
+            else
+                echo "# $INTERFACE [$INTERFACE_MAC] $SCRIPT_ROUTE -> DIFF"
+                diff "$SCRIPT_ROUTE" "/tmp/route-${INTERFACE}.tmp"
+                echo
+                echo "--- begin $SCRIPT_ROUTE ---"
+                cat "$SCRIPT_ROUTE"
+                echo "--- end $SCRIPT_ROUTE ---"
+                echo
+                echo "--- begin /tmp/route-${INTERFACE}.tmp ---"
+                cat "/tmp/route-${INTERFACE}.tmp"
+                echo "--- end /tmp/route-${INTERFACE}.tmp ---"
+                echo
+
+                # what to do? combine them?
+
+                cat "$SCRIPT_ROUTE" "/tmp/route-${INTERFACE}.tmp" | sort -u > "$SCRIPT_ROUTE"
+
+            fi
+        else
+            echo "# $INTERFACE [$INTERFACE_MAC] network-scripts/route-$INTERFACE not found"
+            cat "/tmp/route-${INTERFACE}.tmp" | sort -u > "$SCRIPT_ROUTE"
+        fi
+
+    fi
+
+    let UPDATE_IFCFG=0
+
+    SCRIPT_IFCFG="${SCRIPT_DIR}/ifcfg-${INTERFACE}"
+    if [ -f "$SCRIPT_IFCFG" ]; then
+        let UPDATE_IFCFG=1
+        cat "$SCRIPT_IFCFG" | sed -e "/\"/s///g" | sort -u > "/tmp/ifcfg-${INTERFACE}.tmp"
+    else
+        echo "BOOTPROTO=static" > "/tmp/ifcfg-${INTERFACE}.tmp"
+        echo "DEVICE=$INTERFACE" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        echo "NM_CONTROLLED=no" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        echo "NOZEROCONF=yes" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        echo "ONBOOT=yes" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+    fi
+
+    if [ $UPDATE_IFCFG -eq 1 ] && [ -s "/tmp/ifcfg-${INTERFACE}.tmp" ]; then
+
+        BONDING_OPTS=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^BONDING_OPTS= | awk -FBONDING_OPTS= '{print $NF}')
+        Debug_Variable BONDING_OPTS 7
+        if [ "$BONDING_OPTS" != "" ]; then
+            sed -i "s/^BONDING_OPTS=.*$/BONDING_OPTS=\"${BONDING_OPTS}\"/" "/tmp/ifcfg-${INTERFACE}.tmp"
+        fi
+
+        AUTOCONNECT_PRIORITY=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^AUTOCONNECT_PRIORITY= | awk -FAUTOCONNECT_PRIORITY= '{print $NF}')
+        Debug_Variable AUTOCONNECT_PRIORITY 7
+
+        if [ "$AUTOCONNECT_PRIORITY" == "" ]; then
+            echo "AUTOCONNECT_PRIORITY=-999" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        else
+            sed -i "s/^AUTOCONNECT_PRIORITY=.*$/AUTOCONNECT_PRIORITY=-999/" "/tmp/ifcfg-${INTERFACE}.tmp"
+        fi
+
+        BOOTPROTO=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^BOOTPROTO= | awk -FBOOTPROTO= '{print $NF}')
+        Debug_Variable BOOTPROTO 7
+
+        if [ "$BOOTPROTO" == "" ]; then
+            echo "BOOTPROTO=static" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        else
+            sed -i "s/^BOOTPROTO=.*$/BOOTPROTO=static/" "/tmp/ifcfg-${INTERFACE}.tmp"
+        fi
+
+        DEFROUTE=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^DEFROUTE= | awk -FDEFROUTE= '{print $NF}')
+        Debug_Variable DEFROUTE 7
+
+        if [ "$GATEWAY" != "" ]; then
+            echo "GATEWAY=$GATEWAY" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        fi
+
+        if [ "$DEFROUTE" == "" ] && [ "$GATEWAY" == "" ]; then
+            echo "DEFROUTE=no" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        else
+            if [ "$DEFROUTE" == "no" ] && [ "$GATEWAY" != "" ]; then
+                sed -i "s/^DEFROUTE=.*$/DEFROUTE=yes/" "/tmp/ifcfg-${INTERFACE}.tmp"
+            else
+                if [ "$DEFROUTE" == "" ] && [ "$GATEWAY" != "" ]; then
+                    echo "DEFROUTE=yes" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+                else
+                    sed -i "s/^DEFROUTE=.*$/DEFROUTE=${DEFROUTE}/" "/tmp/ifcfg-${INTERFACE}.tmp"
+                fi
+            fi
+        fi
+
+        DEVICE=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^DEVICE= | awk -FDEVICE= '{print $NF}')
+        Debug_Variable DEVICE 7
+
+        if [ "$DEVICE" == "" ]; then
+            echo "DEVICE=$INTERFACE" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        else
+            sed -i "s/^DEVICE=.*$/DEVICE=$INTERFACE/" "/tmp/ifcfg-${INTERFACE}.tmp"
+        fi
+
+        IPADDR=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^IPADDR= | awk -FIPADDR= '{print $NF}')
+        Debug_Variable IPADDR 7
+
+        if [ "$IPADDR" != "" ] && [ "$IPADDR" != "$INTERFACE_IP" ]; then
+            Warning "$INTERFACE IPADDR is '$IPADDR' but interface ip is '$INTERFACE_IP'; using '$INTERFACE_IP'"
+        fi
+
+        if [ "$IPADDR" == "" ]; then
+            echo "IPADDR=$INTERFACE_IP" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        fi
+
+        IPV4_FAILURE_FATAL=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^IPV4_FAILURE_FATAL= | awk -FIPV4_FAILURE_FATAL= '{print $NF}')
+        if [ "$IPV4_FAILURE_FATAL" == "" ]; then
+            echo "IPV4_FAILURE_FATAL=no" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        else
+            sed -i "s/^IPV4_FAILURE_FATAL=.*$/IPV4_FAILURE_FATAL=no/" "/tmp/ifcfg-${INTERFACE}.tmp"
+        fi
+
+        IPV6=$(cat /proc/net/if_inet6 | grep \ ${INTERFACE}$)
+        Debug_Variable IPV6 2
+
+        IPV6_VARS="IPV6INIT IPV6_AUTOCONF IPV6_DEFROUTE IPV6_PEERDNS IPV6_PEERROUTES IPV6_FAILURE_FATAL"
+
+        for IPV6_VAR in $IPV6_VARS; do
+            if [ "$IPV6" == "" ]; then
+                declare ${IPV6_VAR}="no"
+            else
+                declare ${IPV6_VAR}=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^${IPV6_VAR}= | awk -F${IPV6_VAR}= '{print $NF}' | head -1)
+            fi
+
+            if [ "${!IPV6_VAR}" == "" ]; then
+                Debug_Variable $IPV6_VAR 6 empty
+                declare ${IPV6_VAR}="no"
+            fi
+
+            Debug_Variable $IPV6_VAR 6
+
+            sed -i "/^${IPV6_VAR}=/d" "/tmp/ifcfg-${INTERFACE}.tmp"
+            if [ "${!IPV6_VAR}" != "" ]; then
+                echo "${IPV6_VAR}=${!IPV6_VAR}" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+            fi
+
+        done
+
+        sed -i "/^IPV6_ADDR_GEN_MODE=/d" "/tmp/ifcfg-${INTERFACE}.tmp"
+        IPV6_ADDR_GEN_MODE=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^IPV6_ADDR_GEN_MODE= | awk -FIPV6_ADDR_GEN_MODE= '{print $NF}')
+        if [ "$IPV6_ADDR_GEN_MODE" == "" ]; then
+            if [ "$IPV6" != "" ]; then
+                echo "IPV6_ADDR_GEN_MODE=stable-privacy" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+            fi
+        else
+            echo "IPV6_ADDR_GEN_MODE=${IPV6_ADDR_GEN_MODE}" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        fi
+
+        NAME=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^NAME= | awk -FNAME= '{print $NF}')
+        if [ "$NAME" == "" ]; then
+            echo "NAME=$INTERFACE" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        else
+            sed -i "s/^NAME=.*$/NAME=$INTERFACE/" "/tmp/ifcfg-${INTERFACE}.tmp"
+        fi
+
+        NETMASK=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^NETMASK= | awk -FNETMASK= '{print $NF}')
+        Debug_Variable NETMASK 7
+        INTERFACE_NETMASK=$(ifconfig ${INTERFACE} | grep netmask | awk '{print $4}')
+        Debug_Variable INTERFACE_NETMASK 7
+        if [ "$NETMASK" == "" ]; then
+            echo "NETMASK=$INTERFACE_NETMASK" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        else
+            sed -i "s/^NETMASK=.*$/NETMASK=$INTERFACE_NETMASK/" "/tmp/ifcfg-${INTERFACE}.tmp"
+        fi
+
+        NM_CONTROLLED=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^NM_CONTROLLED= | awk -FNM_CONTROLLED= '{print $NF}')
+        Debug_Variable NM_CONTROLLED 7
+        if [ "$NM_CONTROLLED" == "" ]; then
+            echo "NM_CONTROLLED=no" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        else
+            sed -i "s/^NM_CONTROLLED=.*$/NM_CONTROLLED=no/" "/tmp/ifcfg-${INTERFACE}.tmp"
+        fi
+
+        NOZEROCONF=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^NOZEROCONF= | awk -FNOZEROCONF= '{print $NF}')
+        if [ "$NOZEROCONF" == "" ]; then
+            echo "NOZEROCONF=no" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        else
+            sed -i "s/^NOZEROCONF=.*$/NOZEROCONF=yes/" "/tmp/ifcfg-${INTERFACE}.tmp"
+        fi
+
+        ONBOOT=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^ONBOOT= | awk -FONBOOT= '{print $NF}')
+        if [ "$ONBOOT" == "" ]; then
+            echo "ONBOOT=yes" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        fi
+
+        PEERDNS=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^PEERDNS= | awk -FPEERDNS= '{print $NF}')
+        if [ "$PEERDNS" == "" ]; then
+            echo "PEERDNS=no" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        else
+            sed -i "s/^PEERDNS=.*$/PEERDNS=no/" "/tmp/ifcfg-${INTERFACE}.tmp"
+        fi
+
+        PEERROUTES=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^PEERROUTES= | awk -FPEERROUTES= '{print $NF}')
+        if [ "$PEERROUTES" == "" ]; then
+            echo "PEERROUTES=no" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        else
+            sed -i "s/^PEERROUTES=.*$/PEERROUTES=no/" "/tmp/ifcfg-${INTERFACE}.tmp"
+        fi
+
+        INTERFACE_TYPE="Ethernet"
+
+        if [ -f /proc/net/bonding/${INTERFACE} ]; then
+            INTERFACE_TYPE="Bond"
+        else
+            BRIDGE=$(bridge link show 2>&1 | grep state\ UP | awk -Fmaster '{print $NF}' | awk '{print $1}' | grep ^${INTERFACE}$)
+        fi
+
+        if [ "$BRIDGE" != "" ]; then
+            INTERFACE_TYPE="Bridge"
+        fi
+
+        Debug_Variable INTERFACE_TYPE 7
+
+        TYPE=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^TYPE= | awk -FTYPE= '{print $NF}')
+        Debug_Variable TYPE 7
+
+        if [ "$TYPE" == "" ]; then
+            echo "TYPE=${INTERFACE_TYPE}" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+        else
+            sed -i "s/^TYPE=.*$/TYPE=${INTERFACE_TYPE}/" "/tmp/ifcfg-${INTERFACE}.tmp"
+        fi
+
+        # do not put HWADDR on bond or bridge interfaces
+
+        if [ "$TYPE" != "Bond" ] && [ "$TYPE" != "Bridge" ]; then
+            HWADDR=$(cat "/tmp/ifcfg-${INTERFACE}.tmp" | grep ^HWADDR= | awk -FHWADDR= '{print $NF}')
+            Debug_Variable HWADDR 7
+
+            if [ "$HWADDR" != "$INTERFACE_MAC" ]; then
+                Warning "$INTERFACE HWADDR is '$HWADDR' but interface mac is '$INTERFACE_MAC'; using '$INTERFACE_MAC'"
+            fi
+
+            if [ "$HWADDR" == "" ]; then
+                echo "HWADDR=$INTERFACE_MAC" >> "/tmp/ifcfg-${INTERFACE}.tmp"
+            else
+                sed -i "s/^HWADDR=.*$/HWADDR=$INTERFACE_MAC/" "/tmp/ifcfg-${INTERFACE}.tmp"
+            fi
+        fi
+
+        # make sure UUID lines are removed
+        sed -i "/^UUID=/d" "/tmp/ifcfg-${INTERFACE}.tmp"
+
+        cat "/tmp/ifcfg-${INTERFACE}.tmp" | sort -u > "/tmp/ifcfg-${INTERFACE}.tmp.1"
+        if [ $? -eq 0 ]; then
+            cp "/tmp/ifcfg-${INTERFACE}.tmp.1" "/tmp/ifcfg-${INTERFACE}.tmp"
+            if [ $? -eq 0 ]; then
+                rm "/tmp/ifcfg-${INTERFACE}.tmp.1"
+            fi
+        fi
+
+    fi
+
+    if [ $UPDATE_IFCFG -eq 1 ] && [ -s "$SCRIPT_IFCFG" ] && [ -s "/tmp/ifcfg-${INTERFACE}.tmp" ]; then
+        diff -q "$SCRIPT_IFCFG" "/tmp/ifcfg-${INTERFACE}.tmp" &> /dev/null
+        if [ $? -eq 0 ]; then
+            UPDATE_IFCFG=0
+        fi
+    fi
+
+    if [ $UPDATE_IFCFG -eq 1 ] && [ -s "/tmp/ifcfg-${INTERFACE}.tmp" ]; then
+        echo "# $INTERFACE [$INTERFACE_MAC] $SCRIPT_IFCFG -> UPDATE"
+        echo
+        echo "--- begin diff  '$SCRIPT_IFCFG' '/tmp/ifcfg-${INTERFACE}.tmp' ---"
+        diff "$SCRIPT_IFCFG" "/tmp/ifcfg-${INTERFACE}.tmp"
+        echo "--- end diff  '$SCRIPT_IFCFG' '/tmp/ifcfg-${INTERFACE}.tmp' ---"
+        echo
+
+        cp "/tmp/ifcfg-${INTERFACE}.tmp" "$SCRIPT_IFCFG"
+        if [ $? -ne 0 ]; then
+            Aborting "'tmp/ifcfg-${INTERFACE}.tmp -> '$SCRIPT_CFG' failed to copy"
+        fi
+
+        echo "--- begin  $SCRIPT_IFCFG ---"
+        cat "$SCRIPT_IFCFG"
+        echo "--- end  $SCRIPT_IFCFG ---"
+        echo
+    else
+        echo "# $INTERFACE [$INTERFACE_MAC] $SCRIPT_IFCFG -> OK"
+    fi
+
+    # clean up
+
+    if [ -f /tmp/ifcfg-${INTERFACE}.tmp ]; then
+        Debug "removing /tmp/ifcfg-${INTERFACE}.tmp" 5
+        rm /tmp/ifcfg-${INTERFACE}.tmp
+    fi
+
+    if [ -f /tmp/route-${INTERFACE}.tmp ]; then
+        Debug "removing /tmp/route-${INTERFACE}.tmp" 5
+        rm /tmp/route-${INTERFACE}.tmp
+    fi
+
+    echo
+
+done
+
+Stop $RC

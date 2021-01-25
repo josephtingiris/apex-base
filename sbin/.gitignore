@@ -1,0 +1,6 @@
+*
+!.gitignore
+!apex*
+!base*
+!git*
+!svn*

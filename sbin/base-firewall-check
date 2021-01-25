@@ -1,0 +1,46 @@
+#!/bin/bash
+
+
+#check around midnight to ensure firewalld is running 
+
+i=0
+MONIT_FLAG=0
+FIREWALL_FLAG=0
+DEFAULT_DATE=`date +%Y%m%d-%H%M%S`
+LOG="/var/log/firewall-check.log"
+
+function check_firewall() {
+
+    firewall_monit_status=$(monit status firewalld|grep status| awk '{print $2; exit}')
+    firewall_status=$(firewall-cmd --state)
+
+    if [ "$firewall_status" == "not running" ]; then
+        systemctl start firewalld
+    else
+        FIREWALL_FLAG=1
+    fi
+    if [ "$firewall_monit_status" == "Not" ]; then
+        monit monitor firewalld
+    else
+        MONIT_FLAG=1
+    fi
+echo "Sleeping 15s before checking again"
+sleep 15
+}
+if [[ -w $LOG ]];then
+    echo "Starting Firewall-check script; $DEFAULT_DATE" >> $LOG
+fi
+
+while [ $FIREWALL_FLAG == 0 ] || [ $MONIT_FLAG == 0 ]; do
+    if [ "$i" -lt "4" ]; then
+        echo "Attempt $i"
+        check_firewall
+        i=$((i+1))
+    else
+        echo "error tries exceeded 3, something is wrong"
+        exit
+    fi
+done
+if [[ -w $LOG ]]; then
+    echo "Firewall-check finished $DEFAULT_DATE"
+fi

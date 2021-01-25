@@ -1,0 +1,799 @@
+#!/bin/bash
+
+# This script will format code
+
+# 20140920, jtingiris
+# 20150621, jtingiris, revised (new naming convention & organization)
+
+# For coding conventions, organization, standards, & references, see: /base/README
+
+# GLOBAL_VARIABLES
+
+# begin base.bash.include
+
+if [ "$DEBUG" == "" ]; then
+    DEBUG=0
+fi
+
+INCLUDE_FILE="base.bash"
+INCLUDE_FOUND=0
+INCLUDE_PATHS=("$(pwd)" "$(dirname $0)")
+
+for ((INCLUDE_COUNTER=0; INCLUDE_COUNTER < ${#INCLUDE_PATHS[@]}; INCLUDE_COUNTER++)); do
+
+    INCLUDE_PATH=${INCLUDE_PATHS[$INCLUDE_COUNTER]}
+
+    if [ $INCLUDE_FOUND -eq 1 ]; then break; fi
+
+    while [ ! -z "$INCLUDE_PATH" ]; do
+        if [ "$INCLUDE_PATH" == "." ]; then INCLUDE_PATH=$(pwd -L .); fi
+        if [ "$INCLUDE_PATH" == "/" ]; then break; fi
+        if [ -r "$INCLUDE_PATH/include/$INCLUDE_FILE" ] && [ ! -d "$INCLUDE_PATH/include/$INCLUDE_FILE" ]; then
+            INCLUDE_FOUND=1
+            source "$INCLUDE_PATH/include/$INCLUDE_FILE"
+            Debug "sourced $INCLUDE_PATH/include/$INCLUDE_FILE" 100
+            break
+        else
+            INCLUDE_PATH=$(dirname "$INCLUDE_PATH")
+        fi
+    done
+done
+if [ $INCLUDE_FOUND -ne 1 ]; then echo "$INCLUDE_FILE file not found"; exit 1; fi
+if [ "$BASE_INCLUDE" == "" ]; then echo "$INCLUDE_FILE file invalid"; exit 1; fi
+unset INCLUDE_COUNTER INCLUDE_PATH INCLUDE_FILE
+
+# end base.bash.include
+
+# explicit declarations
+
+declare -i BACKUP_FLAG=0
+declare -i INPUT_FLAG=0
+declare -i TEST_FLAG=0
+declare -i YES_FLAG=0
+
+declare -x DEFAULT_DATE=$(date +%Y%m%d)
+
+declare -i RC=0
+
+declare -x VERSION="0.1";
+
+# Function_Names
+
+function Code_Format_Backup() {
+
+    Debug_Function $@
+
+    # begin function logic
+
+    Dependency "cp"
+
+    local input="$1"
+    local ouput="$2"
+    if [ "$output" == "" ] && [ "$input" != "" ]; then
+        local input_basename=$(basename "$input")
+        local input_dirname=$(dirname "$input")
+        local output="${input_dirname}/${UNIQ}.${input_basename}"
+    fi
+
+    Debug_Variable input 5
+    Debug_Variable output 5
+
+    if [ "${input}" == "" ] || [ "${output}" == "" ]; then
+        RC=1
+        return
+    fi
+
+    if [ $RC -ne 0 ]; then
+        echo "- ${input} : global return code is non zero"
+        return
+    fi
+
+    Debug_Variable input 5
+    Debug_Variable output 5
+
+    if [ -r "${input}" ] && [ -r "${output}" ]; then
+        diff -q "${input}" "${output}" &> /dev/null
+        if [ $? -eq 0 ]; then
+            echo "+ ${input} : nothing changed"
+            # no differences
+            rm -f "${output}" &> /dev/null
+            BACKUP_FLAG=0
+        else
+            echo "+ $INPUT : format complete"
+            if [ -w "${input}" ] && [ -r "${output}" ]; then
+                if [ -s "${output}" ]; then
+                    cp "${output}" "${input}"
+                    RC=$?
+                else
+                    echo "+ ${input} : ${output} is empty"
+                    RC=1
+                    return
+                fi
+            else
+                echo "+ ${input} : not writable"
+                RC=1
+                return
+            fi
+
+        fi
+    else
+        echo "+ ${input} : ${input} and ${output} not readable"
+        RC=1
+        return
+    fi
+
+    if [ $RC -ne 0 ]; then return; fi
+
+    if [ $BACKUP_FLAG -eq 0 ] && [ -w "${output}" ]; then
+        echo "+ ${input} : removing ${output}"
+        rm -f "${output}" &> /dev/null
+    fi
+
+    if [ $BACKUP_FLAG -eq 1 ] && [ -r "${output}" ]; then
+        echo "+ $input : backup file is ${output}"
+    fi
+
+    # end function logic
+
+    Debug_Function $@
+
+}
+
+function Code_Format_Common() {
+
+    Debug_Function $@
+
+    # begin function logic
+
+    Dependency "sed vim"
+
+    local input="$1"
+    local output="$2"
+    if [ "$output" == "" ] && [ "$input" != "" ]; then
+        local input_basename=$(basename "$input")
+        local input_dirname=$(dirname "$input")
+        local output="${input_dirname}/${UNIQ}.${input_basename}"
+    fi
+
+    Debug_Variable input 5
+    Debug_Variable output 5
+
+    if [ "${input}" == "" ] || [ "${output}" == "" ]; then
+        RC=1
+        return
+    fi
+
+    Debug_Variable input 5
+    Debug_Variable output 5
+
+    if [ ! -w "${input}" ]; then
+        echo - "$input : file not writable"
+        RC=1
+        return
+    fi
+
+    echo "+ ${input} : updating common formats"
+
+    echo "+ ${input} : stage 1"
+    local sed_args=""
+    local sed_args+=" -e 's/jtingiris/jtingiris/g' " # use my login, not email
+    local sed_args+=" -e 's/\t/    /g' " # replace tabs with spaces
+    local sed_args+=" -e 's///g' " # remove carriage returns
+    local sed_args+=" -e 's/[ \t]*$//g' " # remove trailing white spaces
+
+    #local sed_args+=" -e '/\/\/\/\//{x;p;x;}' " # add a newline before lines containing ////
+    #local sed_args+=" -e '/\/\*/{x;p;x;}' " # add a newline before php block
+    #local sed_args+=" -e '/\/\*\*/{x;p;x;}' " # add a newline before php doc
+    #local sed_args+=" -e 's/\*\/$/\*\/\n/g' " # add a newline after php doc
+    #local sed_args+=" -e '/{$/{x;p;x;}' " # add a newline before open curly bracket
+    #local sed_args+=" -e '/}$/{x;p;x;}' " # add a newline before close curly bracket
+    #local sed_args+=" -e 's/{$/{\n/g' " # add a newline after open curly bracket
+    #local sed_args+=" -e 's/}$/}\n/g' " # add a newline after close curly bracket
+
+    local sed_args+=" -e 's/^[ \t]*$//g' " # remove spaces from lines with only spaces
+    eval sed $sed_args -i "${input}"
+    RC=$?
+
+    # do this just before indenting (with vim)
+    echo "+ ${input} : stage 2"
+    local sed_args=""
+    local sed_args+=" -e ':a; /^\n*$/{ s/\n//; N;  ba};'" # replace multiple blank lines with a single blank line
+    eval sed $sed_args -i "${input}"
+    RC=$?
+
+    Code_Format_Indent "${input}"
+
+    # end function logic
+
+    Debug_Function $@
+
+}
+
+function Code_Format_Html() {
+
+    Debug_Function $@
+
+    # begin function logic
+
+    Dependency "tidy"
+
+    local input="$1"
+    local output="$2"
+    if [ "$output" == "" ] && [ "$input" != "" ]; then
+        local input_basename=$(basename "$input")
+        local input_dirname=$(dirname "$input")
+        local output="${input_dirname}/${UNIQ}.${input_basename}"
+    fi
+
+    Debug_Variable input 5
+    Debug_Variable output 5
+
+    if [ "${input}" == "" ] || [ "${output}" == "" ]; then
+        RC=1
+        return
+    fi
+
+    # end function logic
+
+    Debug_Function $@
+
+}
+
+function Code_Format_Indent() {
+
+    Debug_Function $@
+
+    # begin function logic
+
+    local input="$1"
+
+    if [ ! -w "${input}" ]; then
+        Aborting "${input} file not writable"
+    fi
+
+    local filetype=""
+
+    if [ $PHP_CODE -eq 1 ]; then
+        local filetype="php"
+    fi
+
+    if [ $SHELL_CODE -eq 1 ]; then
+        local filetype="sh"
+    fi
+
+    if [ "$filetype" == "" ]; then return; fi
+
+    echo "+ ${input} : autoindent ($filetype)"
+    # kludge to get vim to autoformat; only works with a source script
+    echo > /tmp/vim.bcf.$UNIQ
+    echo "set autoindent" >> /tmp/vim.bcf.$UNIQ
+    echo "set expandtab" >> /tmp/vim.bcf.$UNIQ
+    echo "set nocompatible" >> /tmp/vim.bcf.$UNIQ
+    echo "set nobackup" >> /tmp/vim.bcf.$UNIQ
+    echo "set nomodeline" >> /tmp/vim.bcf.$UNIQ
+    echo "set smartindent" >> /tmp/vim.bcf.$UNIQ
+    echo "set tabstop=4" >> /tmp/vim.bcf.$UNIQ
+    echo "set shiftwidth=4" >> /tmp/vim.bcf.$UNIQ
+    echo "syntax on" >> /tmp/vim.bcf.$UNIQ
+    echo "colorscheme elflord" >> /tmp/vim.bcf.$UNIQ
+    echo "set syntax=$filetype" >> /tmp/vim.bcf.$UNIQ
+
+    echo "filetype plugin indent on" >> /tmp/vim.bcf.$UNIQ
+    if [ -r "/root/.vim/indent/${filetype}.vim" ]; then
+        echo "source /root/.vim/indent/${filetype}.vim" >> /tmp/vim.bcf.$UNIQ
+    fi
+    echo "set filetype=$filetype" >> /tmp/vim.bcf.$UNIQ
+    echo "autocmd VimEnter,BufWritePre ${input} :normal gg=G" >> /tmp/vim.bcf.$UNIQ
+    /bin/vim -u /tmp/vim.bcf.$UNIQ -c ":wq" "${input}" &> /dev/null
+    wait $!
+    #cat /tmp/vim.bcf.$UNIQ
+    #cp /tmp/vim.bcf.$UNIQ /tmp/vimrc.test
+    rm -f /tmp/vim.bcf.$UNIQ &> /dev/null
+
+    # end function logic
+
+    Debug_Function $@
+
+}
+
+function Code_Format_Php() {
+
+    Debug_Function $@
+
+    # begin function logic
+
+    Dependency "php php-cs-fixer"
+
+    local input="$1"
+    local output="$2"
+    if [ "$output" == "" ] && [ "$input" != "" ]; then
+        local input_basename=$(basename "$input")
+        local input_dirname=$(dirname "$input")
+        local output="${input_dirname}/${UNIQ}.${input_basename}"
+    fi
+
+    Debug_Variable input 5
+    Debug_Variable output 5
+
+    if [ "${input}" == "" ] || [ "${output}" == "" ]; then
+        RC=1
+        return
+    fi
+
+    # https://github.com/FriendsOfPHP/PHP-CS-Fixer
+    echo "+ ${input} : php-cs-fixer started (PSR-2)"
+    cp "${input}" "${output}" &> /dev/null
+    RC=$!
+    if [ $RC -ne 0 ]; then
+        echo "+ ${input} : php-cs-fixer cp failed"
+        return
+    else
+        echo "+ ${input} : php-cs-fixer ${output}"
+    fi
+    # need a better header
+    #header="@category    PHP"
+    #header="" # remove header
+    #php-cs-fixer -n --using-cache=no --rules=@PSR1,@PSR2,@Symfony,combine_consecutive_unsets,heredoc_to_nowdoc,no_useless_return,ordered_class_elements --rules='{"concat_space": {"spacing": "one"}}' --rules='{"header_comment": {"commentType": "PHPDoc", "header": "'"$header"'", "location": "after_open"}}' fix "${output}" &> /dev/null
+    php-cs-fixer -n --using-cache=no --rules=@PSR1,@PSR2,@Symfony,combine_consecutive_unsets,heredoc_to_nowdoc,no_useless_return,ordered_class_elements --rules='{"concat_space": {"spacing": "one"}}' fix "${output}" &> /dev/null
+    RC=$?
+    if [ $RC -ne 0 ]; then
+        echo "+ ${input} : php-cs-fixer failed"
+        return
+    else
+        echo "+ ${input} : php-cs-fixer succeeded"
+    fi
+
+    if [ ! -s "${output}" ]; then
+        echo "+ ${input} : ${output} is empty"
+        rm -f "${output}" &> /dev/null
+        RC=1
+        return
+    fi
+
+    if [ ! -f "${output}" ]; then
+        echo "+ ${input} : missing ${output}; php-cs-fixer failed"
+        RC=1
+        return
+    fi
+
+    # replace certain, old php comment styles with docblock styles
+    echo "+ ${output} : updating specific php formats"
+    sed -i "${output}" -e "/#\ GLOBALS$/s//\n\/\*\n\* GLOBALS\n\*\/\n/g"
+    sed -i "${output}" -e "/#\ GLOBAL_VARIABLES$/s//\n\/\*\n\* GLOBAL_VARIABLES\n\*\/\n/g"
+    sed -i "${output}" -e "/#\ Functions$/s//\n\/\*\n\* Functions\n\*\/\n/g"
+    sed -i "${output}" -e "/#\ Main\ Logic$/s//\n\/\*\n\* Main\ Logic\n\*\/\n/g"
+    sed -i "${output}" -e "/#\ Options\ Logic$/s//\n\/\*\n\* Options\ Logic\n\*\/\n/g"
+    sed -i "${output}" -e "/#\ Validation\ Logic$/s//\n\/\*\n\* Validation\ Logic\n\*\/\n/g"
+    sed -i "${output}" -e "/#\ begin\ function\ logic$/s//\n\/\*\n\* begin function logic\n\*\/\n/g"
+    sed -i "${output}" -e "/#\ end\ function\ logic$/s//\n\/\*\n\* end function logic\n\*\/\n/g"
+
+    Code_Format_Common "${output}"
+
+    # check syntax
+    echo -n "+ ${output} : "
+    php -l "${output}"
+    RC=$?
+
+    if [ $RC -eq 0 ]; then
+        OUTPUT="${output}" # reset the global OUTPUT
+    else
+        unset OUTPUT
+        if [ -w "${output}" ]; then
+            echo "+ ${input} : removing ${output} (broken)"
+            if [ $TEST_FLAG -eq 1 ]; then
+                vim "${output}"
+            fi
+            rm -f "${output}" &> /dev/null
+        fi
+    fi
+
+    # end function logic
+
+    Debug_Function $@
+
+}
+
+function Code_Format_Shell() {
+
+    Debug_Function $@
+
+    # begin function logic
+
+    Dependency "bash"
+
+    local input="$1"
+    local output="$2"
+    if [ "$output" == "" ] && [ "$input" != "" ]; then
+        local input_basename=$(basename "$input")
+        local input_dirname=$(dirname "$input")
+        local output="${input_dirname}/${UNIQ}.${input_basename}"
+    fi
+
+    Debug_Variable input 5
+    Debug_Variable output 5
+
+    if [ "${input}" == "" ] || [ "${output}" == "" ]; then
+        RC=1
+        return
+    fi
+
+    if [ -f "${output}" ]; then
+        echo "+ ${input} : ${output} exists"
+        RC=1
+        return
+    fi
+
+    Debug_Variable input 5
+    Debug_Variable output 5
+
+    cp "${input}" "${output}"
+    RC=$?
+
+    if [ $RC -ne 0 ]; then
+        echo "+ ${input} : ${output} failed"
+        return
+    fi
+
+    # replace certain, shell specific stuff (could be WAY better) but, hey, at least it's consistent
+    echo "+ ${output} : updating specific shell formats"
+    local sed_args=""
+    local sed_args+=" -e '/^[ \t]*for\ /{x;p;x;}'" # add a newline before for statements
+    local sed_args+=" -e '/^[ \t]*while\ /{x;p;x;}'" # add a newline before for statements
+    eval sed $sed_args -i "${output}"
+
+    if [ ! -s "${output}" ]; then
+        echo "+ ${input} : ${output} is empty"
+        rm -f "${output}" &> /dev/null
+        RC=1
+        return
+    fi
+
+    Code_Format_Common "${output}"
+
+    # check syntax
+    echo "+ ${output} : syntax check"
+    bash -n "${output}"
+    RC=$?
+
+    if [ $RC -eq 0 ]; then
+        OUTPUT="${output}" # reset the global OUTPUT
+    else
+        unset OUTPUT
+        if [ -w "${output}" ]; then
+            echo "+ ${input} : removing ${output} (broken)"
+            rm -f "${output}" &> /dev/null
+        fi
+    fi
+
+    # end function logic
+
+    Debug_Function $@
+
+}
+
+function Usage() {
+
+    Debug_Function $@
+
+    local note="$1"
+
+    # begin function logic
+
+    echo
+    echo "usage: $0 <options>"
+    echo
+    echo "options:"
+    echo
+    # these are handled in base.bash; useful to know though
+    echo "  -D | --debug [level]           = print debug messages (less than) [level]"
+    echo "  -H | --help                    = print this message"
+    echo "  -V | --version                 = print version"
+    echo
+    echo "  -b | --backup                  = create a persistent backup of input <file>"
+    echo
+    echo "  -i | --input <file>            = use the given input <file>"
+    echo
+    echo "  -y | --yes                     = answer 'yes' to all questions (automate)"
+    echo
+
+    if [ "$note" != "" ]; then
+        echo "NOTE: $note"
+        echo
+    fi
+
+    # end function logic
+
+    Debug_Function $@
+
+    Stop 1
+
+}
+
+# Validation Logic
+
+Dependency "awk grep sed vim"
+
+# Options Logic
+
+# call the base Options function (to process --debug, -debug, --help, -help, --usage, -usage, --verbose, -verbose)
+Options $@
+
+# expand upon the base Options function (careful, same named switches will be processed twice)
+
+# for each command line argument, evaluate them case by case, process them, and shift to the next
+
+for ((ARGUMENT=1; ARGUMENT <= $ARGUMENTS_TOTAL; ARGUMENT++)); do
+    case "$1" in
+    -b | --backup | -backup)
+        BACKUP_FLAG=1
+        Debug_Variable BACKUP_FLAG 4 "$1 flag was set"
+        ;;
+    -i | --input | -input)
+        INPUT_FLAG=1
+        INPUT="$(find $2)"
+        if [ "$INPUT" != "" ] && [ ${INPUT:0:1} == "-" ]; then
+            INPUT=""
+        fi
+        if [ "$INPUT" == "" ]; then
+            Usage "$1 argument requires a given value"
+        else
+            declare INPUT=$2
+            Debug_Variable INPUT 4 "$1 flag was set"
+            shift
+        fi
+        ;;
+    -t | --test | -test)
+        TEST_FLAG=1
+        Debug_Variable TEST_FLAG 4 "$1 flag was set"
+        ;;
+    -y | --yes | -yes)
+        YES_FLAG=1
+        Debug_Variable YES_FLAG 4 "$1 flag was set"
+        ;;
+    *)
+        # unknown flags
+        if [ "$1" != "" ] && [ $OPTION -eq 0 ]; then
+            echo "unknown flag '$1'"
+            Stop 2 # not absolutely necessary, but does enforce proper usage
+        fi
+        ;;
+    esac
+    shift
+done
+
+#echo "ARGUMENTS=$ARGUMENTS"
+
+# e.g., if there are no arguments, echo a usage message and/or exit
+if [ $ARGUMENTS_TOTAL -eq 0 ]; then Usage; fi
+if [ $ARGUMENTS_TOTAL -eq 1 ] && [ $DEBUG_FLAG -ne 0 ]; then Usage; fi
+if [ $ARGUMENTS_TOTAL -eq 2 ] && [ $DEBUG_FLAG -ne 0 ] && [ "$DEBUG" != "" ]; then Usage; fi
+
+# Main Logic
+
+Start
+
+# put your login id here if you accept the responsibilities and want to run this script
+ACCEPTED_RESPONSIBILITIES="
+jtingiris
+cmagargle
+rhopek
+"
+
+USE_AT_YOUR_OWN_RISK=0
+
+for ACCEPTED_RESPONSIBILITY in $ACCEPTED_RESPONSIBILITIES; do
+    Debug_Variable WHO 10 $ACCEPTED_RESPONSIBILITY
+    if [ "$WHO" == "$ACCEPTED_RESPONSIBILITY" ]; then
+        USE_AT_YOUR_OWN_RISK=1
+    fi
+done
+if [ $USE_AT_YOUR_OWN_RISK -eq 0 ]; then
+    Aborting "you did not explicitly accept the responsibility to use this script"
+fi
+
+# do something
+
+if [ $INPUT_FLAG -eq 0 ] || [ "$INPUT" == "" ] || [ ! -r "$INPUT" ]; then
+    Usage "must specify a valid --input file"
+fi
+
+if [ ! -f "$INPUT" ]; then
+    Aborting "$INPUT file not found"
+fi
+
+if [ ! -w "$INPUT" ]; then
+    Aborting "$INPUT file is not writable"
+fi
+
+if [ -d "$INPUT" ]; then
+    Aborting "$INPUT is a directory"
+fi
+
+if [ "$INPUT" == "." ] || [ "$INPUT" == ".." ] || [ "$INPUT" == "*" ]; then
+    Aborting "$INPUT is not valid"
+fi
+
+INPUT_COUNT=$(echo "$INPUT" | wc -l)
+
+if [ "$INPUT_COUNT" != "1" ]; then
+    Aborting "$INPUT is more than 1"
+fi
+
+# try and determine what type of file this is
+
+CODE_SUPPORTED=0
+
+declare -l OPEN_TAG=$(head -1 $INPUT)
+Debug_Variable OPEN_TAG 10
+
+# currently; js, php, python, & shell
+
+# can be regex; case is ignored
+
+JS_TAGS=""
+
+HTML_TAGS="
+<!DOCTYPE[[:space:]]html>
+"
+
+# can be regex; case is ignored
+PHP_TAGS="
+^<?php.*
+^#!/bin/php
+^#!/usr/bin/php
+^#!/bin/env[[:space:]]php
+^#!/usr/bin/env[[:space:]]php
+^#[[:space:]]begin.*php.*
+"
+
+# can be regex; case is ignored
+PYTHON_TAGS=""
+
+# can be regex; case is ignored
+SHELL_TAGS="
+^#!/bin/bash
+"
+
+CODE_SUPPORTED=0
+
+# add HTML_TAGS later
+SUPPORTED_TAGS="$PHP_TAGS $PYTHON_TAGS $SHELL_TAGS"
+
+for SUPPORTED_TAG in $SUPPORTED_TAGS; do
+    Debug_Variable SUPPORTED_TAG 19
+    VALID_TAG=$(echo "$OPEN_TAG" | grep -ie "$SUPPORTED_TAG")
+    if [ "$VALID_TAG" != "" ]; then
+        Debug_Variable VALID_TAG 10 SUPPORTED
+        CODE_SUPPORTED=1
+        break
+    fi
+done
+unset VALID_TAG
+
+if [ $CODE_SUPPORTED -eq 0 ]; then
+    Aborting "$INPUT is not a supported code type"
+fi
+
+CODE_DETERMINED=0
+
+HTML_CODE=0
+
+for HTML_TAG in $HTML_TAGS; do
+    if [ $CODE_DETERMINED -eq 1 ]; then break; fi
+    Debug_Variable HTML_TAG 10
+    VALID_TAG=$(echo "$OPEN_TAG" | grep -ie "$HTML_TAG")
+    if [ "$VALID_TAG" != "" ]; then
+        Debug_Variable VALID_TAG 10 HTML
+        CODE_DETERMINED=1
+        HTML_CODE=1
+    fi
+done
+unset VALID_TAG
+
+PHP_CODE=0
+
+for PHP_TAG in $PHP_TAGS; do
+    if [ $CODE_DETERMINED -eq 1 ]; then break; fi
+    Debug_Variable PHP_TAG 10
+    VALID_TAG=$(echo "$OPEN_TAG" | grep -ie "$PHP_TAG")
+    if [ "$VALID_TAG" != "" ]; then
+        Debug_Variable VALID_TAG 10 PHP
+        CODE_DETERMINED=1
+        PHP_CODE=1
+    fi
+done
+unset VALID_TAG
+
+PYTHON_CODE=0
+
+for PYTHON_TAG in $PYTHON_TAGS; do
+    if [ $CODE_DETERMINED -eq 1 ]; then break; fi
+    Debug_Variable PYTHON_TAG 10
+    VALID_TAG=$(echo "$OPEN_TAG" | grep -ie "$PYTHON_TAG")
+    if [ "$VALID_TAG" != "" ]; then
+        Debug_Variable VALID_TAG 10 PYTHON
+        CODE_DETERMINED=1
+        PYTHON_CODE=1
+    fi
+done
+unset VALID_TAG
+
+SHELL_CODE=0
+
+for SHELL_TAG in $SHELL_TAGS; do
+    if [ $CODE_DETERMINED -eq 1 ]; then break; fi
+    Debug_Variable SHELL_TAG 10
+    VALID_TAG=$(echo "$OPEN_TAG" | grep -ie "$SHELL_TAG")
+    if [ "$VALID_TAG" != "" ]; then
+        Debug_Variable VALID_TAG 10 SHELL
+        CODE_DETERMINED=1
+        SHELL_CODE=1
+    fi
+done
+unset VALID_TAG
+
+Debug_Variable HTML_CODE 10
+Debug_Variable PHP_CODE 10
+Debug_Variable PYTHON_CODE 10
+Debug_Variable SHELL_CODE 10
+
+# double check
+if [ $CODE_DETERMINED -eq 0 ]; then
+    Aborting "$INPUT is not a supported code type (undetermined)"
+fi
+
+# code specific formatting
+
+if [ "$INPUT" != "" ]; then
+    INPUT_BASENAME=$(basename "$INPUT")
+    INPUT_DIRNAME=$(dirname "$INPUT")
+    OUTPUT="${INPUT_DIRNAME}/${UNIQ}.${INPUT_BASENAME}"
+fi
+Debug_Variable OUTPUT 9
+
+Question "do you want to format $INPUT"
+if [ "$QUESTION_FLAG" -ne 1 ]; then
+    Aborting "nothing done"
+fi
+
+echo "+ $INPUT : format start"
+
+if [ $HTML_CODE -eq 1 ]; then
+    Code_Format_Html "$INPUT" # resets OUTPUT
+fi
+
+if [ $PHP_CODE -eq 1 ]; then
+    Code_Format_Php "$INPUT" # resets OUTPUT
+fi
+
+if [ $SHELL_CODE -eq 1 ]; then
+    Code_Format_Shell "$INPUT" # resets OUTPUT
+fi
+
+if [ $RC -ne 0 ]; then
+    echo "+ $INPUT : format failed"
+    Stop $RC
+fi
+
+if [ $CODE_DETERMINED -eq 1 ]; then
+    Code_Format_Backup "$INPUT" "$OUTPUT"
+fi
+
+# clean up absolutely
+if [ $BACKUP_FLAG -eq 0 ] && [ -w "${OUTPUT}" ]; then
+    echo "+ ${INPUT} : removing ${OUTPUT}"
+    rm -f "${OUTPUT}" &> /dev/null
+fi
+
+if [ $TEST_FLAG -eq 1 ]; then
+    # testing
+    vim "${INPUT}"
+    clear
+    svn diff "${INPUT}"
+    Question "skip svn revert"
+    if [ "$QUESTION_FLAG" -eq 0 ]; then
+        svn revert "${INPUT}"
+    fi
+fi
+
+Stop $RC

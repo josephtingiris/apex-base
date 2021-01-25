@@ -1,0 +1,41 @@
+#!/bin/php
+<?php 
+/*
+ * This will display a lead as name/value keypairs, so its a lot easier to see teh values of the lead.
+* base-showlead /var/spool/cache/cla/all/lead/archive/20170308/25d4a6cf-8afe-4f1b-861b-64302d186648.lead.csv
+*
+ */
+if ($argc < 2) {
+    echo "Filename is required\n";
+    die (sprintf("Usage: %s <lead_file_name>", __FILE__  ));
+}
+
+$fileName = "/var/spool/cache/cla/all/lead/archive/20170308/25d4a6cf-8afe-4f1b-861b-64302d186648.lead.csv";
+$fileName = $argv[1];
+
+
+$lines = file($fileName);
+
+
+$i = 0;
+$cols = array();
+foreach ($lines as $line) {
+    $arr = str_getcsv($line);
+    if ($i == 0) { // this is the header row
+        $cols = array_flip($arr);
+    } else { // this is the data row...
+        $data = $arr;
+    }
+
+    ++$i;
+}
+
+foreach ($cols as  $name=>$num) {
+	echo "$name = '" ;
+	if (isset($data[$num])) 
+		echo $data[$num];
+
+	echo "'\n";
+
+}
+?>

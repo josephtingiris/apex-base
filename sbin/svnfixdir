@@ -1,0 +1,48 @@
+#!/bin/bash
+
+PATH=/base/bin:/base/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+
+#echo "this script is not very intelligent (but useful); comment this if you want to use it"
+#exit
+
+zero=`basename $0`
+
+if [ "$1" == "" ] || [ ! -d "$1" ]; then exit; fi
+
+echo "fixing $1 ..."
+
+tmpdir=/tmp/$zero
+if [ -d "$tmpdir" ]; then
+    echo "removing $tmpdir ..."
+    rm -rf "$tmpdir"
+fi
+
+rsync -avp --exclude=.svn/ "$1/" "$tmpdir/" --delete-after
+if [ $? -ne 0 ]; then
+    echo "error during rsync (backup)"
+    exit 1
+fi
+
+rm -rf "$1"
+
+svn up "$1"
+if [ $? -ne 0 ]; then
+    echo "error during svn up $1"
+    exit 1
+fi
+
+rsync -avpC "$tmpdir/" "$1/" --delete-after
+if [ $? -ne 0 ]; then
+    echo "error during rsync (restore)"
+    exit 1
+fi
+
+echo
+echo NOTICE ...
+echo
+
+svn up "$1"
+if [ $? -ne 0 ]; then
+    echo "error during svn up $1"
+    exit 1
+fi

@@ -1,0 +1,87 @@
+#!/bin/bash
+
+# This script will ping tunnel interfaces to ensure they are up #
+# Quick and dirty
+#
+#Globals
+#
+
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+
+INCLUDE_FILE="base.bash"
+INCLUDE_FOUND=0
+INCLUDE_PATHS="$(dirname $0) $(pwd)"
+for INCLUDE_PATH in $INCLUDE_PATHS; do
+    if [ $INCLUDE_FOUND -eq 1 ]; then break; fi
+    while [ ! -z "$INCLUDE_PATH" ]; do
+        if [ "$INCLUDE_PATH" == "." ]; then INCLUDE_PATH=$(pwd -L .); fi
+        if [ "$INCLUDE_PATH" == "/" ]; then break; fi
+        if [ -r "$INCLUDE_PATH/include/$INCLUDE_FILE" ] && [ ! -d "$INCLUDE_PATH/include/$INCLUDE_FILE" ]; then
+            INCLUDE_FOUND=1
+            source "$INCLUDE_PATH/include/$INCLUDE_FILE"
+            Debug "sourced $INCLUDE_PATH/include/$INCLUDE_FILE" 500
+            break
+        else
+            INCLUDE_PATH=`dirname "$INCLUDE_PATH"`
+        fi
+    done
+done
+if [ $INCLUDE_FOUND -ne 1 ]; then echo "$INCLUDE_FILE file not found"; exit 1; fi
+if [ "$BASE_INCLUDE" == "" ]; then echo "$INCLUDE_FILE file invalid"; exit 1; fi
+unset INCLUDE_PATH INCLUDE_FILE
+
+# end base.bash.include
+
+# you need to add variables here and call them at the bottom
+
+ics0001_ip="10.111.16.18"
+ics0002_ip="10.111.16.14"
+
+date=$(date "+%Y%m%d %H:%M:%S")
+logfile="/var/log/tunnel-check.log"
+
+if [[ ! -w $logfile ]]; then
+    touch $logfile
+    chmod 660 $logfile
+fi
+
+function Log() {
+    echo "$date $1" >> $logfile
+}
+
+function Alert() {
+if [[ $1 != "" ]];then
+    msg=$1
+else
+    msg="No message"
+fi
+
+echo -e "$(hostname) : \n  Script : $(basename $0) \n  Error Message : $msg \n\n Tail of Log : \n\n $(tail $logfile)" |mailx -r $(basename $0).$(hostname) -s "ALERT!!: $(basename $0)" root
+}
+
+function Check_ip() {
+if [[ $1 == "" ]]; then
+    acct="No account"
+else
+    acct=$1
+fi
+if [[ $2 == "" ]]; then
+    Log "No IP was specified to check on account $acct"
+else
+    check_ip=$2
+fi
+
+ping $check_ip -c 3 >> /dev/null
+if [[ $? != 0 ]];then
+    Log "ERROR: on account=$acct ip=$check_ip"
+    Alert "IP did not ping successfully account=$acct ip=$check_ip"
+else
+    Log " Success: $acct $check_ip"
+fi
+}
+
+Check_ip "ics0001" "$ics0001_ip"
+Check_ip "ics0002" "$ics0002_ip"
+
+
+#Alert "testing"

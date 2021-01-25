@@ -1,0 +1,222 @@
+#!/bin/bash
+
+# This script will ...
+
+# 20140920, joseph.tingiris@gmail.com
+
+ARGUMENTS="$@"
+
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+
+BASE_INCLUDE=/base/include/base.bash
+if [ ! -f $BASE_INCLUDE ] && [ "$BASE_INCLUDE" != "" ]; then
+    BASE_INCLUDE="/usr/local/include/base.bash"
+fi
+if [ ! -f $BASE_INCLUDE ]; then
+    echo
+    echo "ERROR: can't find include file $BASE_INCLUDE"
+    echo
+    exit 9
+else
+    source "$BASE_INCLUDE"
+fi
+
+
+
+# GLOBAL_VARIABLES
+
+# explicit strings
+
+DEFAULT_BMC=127.0.0.1
+DEFAULT_DATE=`date +%Y%m%d`
+DEFAULT_USERID=USERID
+DEFAULT_PASSWD=B4s38mgt
+
+# explicit integers (0=off)
+BMC_FLAG=0
+INFO_FLAG=0
+PASSWD_FLAG=0
+RESET_FLAG=0
+USERID_FLAG=0
+
+# Functions
+
+Usage() {
+    echo
+    echo "usage: $0 <options>"
+    echo
+    echo "options:"
+    echo
+    echo "  --bmc <host>                = connect to an BMC console (e.g. x336) using the given BMC host name or IP address"
+    echo "  --info                      = display console information"
+    echo "  --reset                     = reset (power off/on) machine"
+    echo
+    echo "  --userid                    = use the given user id [default=$DEFAULT_USERID]"
+    echo "  --password                  = use the given password [default=********]"
+    echo
+    echo "  --debug                     = turn on debugging"
+    echo "  --help                      = this message"
+    echo
+    echo "  --verbose                   = increase verbosity"
+    echo
+    if [ "$1" != "" ]; then
+        echo "$1"
+        echo
+    fi
+    exit 1
+}
+
+# Options Logic
+
+# if there are no arguments, echo a usage message and/or exit
+if [ $# -eq 0 ]; then Usage; fi
+
+Options $@
+
+# because the arguments get shifted each time, make sure to set and use a previously declared variable
+declare -i total_arguments=$#
+
+# for each command line argument, evaluate them case by case, process them, and shift to the next
+for ((i=1; i <= $total_arguments; i++)); do
+    arguments=0
+    case "$1" in
+    --debug)
+        DEBUG_FLAG=1
+        DEBUG_FLAG_VALUE="$2"
+        if [ "$DEBUG_FLAG_VALUE" != "" ] && [ ${DEBUG_FLAG_VALUE:0:1} == "-" ]; then
+            DEBUG_FLAG_VALUE=""
+        fi
+        Debug "$1 flag was set" 8
+        if [ "$DEBUG_FLAG_VALUE" != "" ]; then
+            declare -i DEBUG_LEVEL=$2
+            Debug "$1 flag value = '$DEBUG_LEVEL'" 8
+            shift
+        else
+            declare -i DEBUG_LEVEL=0
+        fi
+    ;;
+    --verbose)
+        VERBOSE_FLAG=1
+        Debug "$1 flag was set" 8
+    ;;
+    --bmc|--ip|--x336)
+        arguments=1
+        BMC_FLAG=1
+        BMC_FLAG_VALUE="$2"
+        if [ "$BMC_FLAG_VALUE" == "" ]; then Usage "$1 requires a given value"; fi
+        if [ "$BMC_FLAG_VALUE" != "" ] && [ ${BMC_FLAG_VALUE:0:1} == "-" ]; then
+            echo "warning, $1 argument value looks like a flag!";
+        fi
+        Debug "$1 flag value = '$2'" 8
+        shift # do an extra shift for flags with arguments
+    ;;
+    --info|-i)
+        arguments=1
+        INFO_FLAG=1
+        Debug "$1 flag value = '$2'" 8
+    ;;
+    --password|--passwd|-p|-P)
+        arguments=1
+        PASSWD_FLAG=1
+        PASSWD_FLAG_VALUE="$2"
+        if [ "$PASSWD_FLAG_VALUE" == "" ]; then Usage "$1 requires a given value"; fi
+        if [ "$PASSWD_FLAG_VALUE" != "" ] && [ ${PASSWD_FLAG_VALUE:0:1} == "-" ]; then
+            echo "warning, $1 argument value looks like a flag!";
+        fi
+        Debug "$1 flag value = '$2'" 8
+        shift # do an extra shift for flags with arguments
+    ;;
+    --reset|-r)
+        arguments=1
+        RESET_FLAG=1
+        Debug "$1 flag value = '$2'" 8
+    ;;
+    --userid|--user|-u|-U)
+        arguments=1
+        USERID_FLAG=1
+        USERID_FLAG_VALUE="$2"
+        if [ "$USERID_FLAG_VALUE" == "" ]; then Usage "$1 requires a given value"; fi
+        if [ "$USERID_FLAG_VALUE" != "" ] && [ ${USERID_FLAG_VALUE:0:1} == "-" ]; then
+            echo "warning, $1 argument value looks like a flag!";
+        fi
+        Debug "$1 flag value = '$2'" 8
+        shift # do an extra shift for flags with arguments
+    ;;
+    -h | --help)
+        Debug "$1 flag was set" 8
+        Usage
+    ;;
+    *)
+        # unknown flags
+        if [ $arguments -eq 0 ] && [ "$1" != "" ]; then
+            echo "unknown flag '$1'"
+            exit 2 # not absolutely necessary, but does enforce proper Usage
+        fi
+    ;;
+    esac
+    shift
+done
+
+# Main Logic
+
+if [ $BMC_FLAG -ne 1 ]; then Usage "must specify a --bmc host name or ip address"; fi
+
+Start
+
+# Configuration Defaults
+
+UNIQ=`date +%s`
+TMPFILE=$0.$UNIQ.tmp
+
+Debug "$0 started" 1
+
+if [ $BMC_FLAG -eq 0 ]; then BMC=$DEFAULT_BMC; else BMC=$BMC_FLAG_VALUE; fi
+if [ $USERID_FLAG -eq 0 ]; then USERID=$DEFAULT_USERID; else USERID=$USERID_FLAG_VALUE; fi
+if [ $PASSWD_FLAG -eq 0 ]; then PASSWD=$DEFAULT_PASSWD; else PASSWD=$PASSWD_FLAG_VALUE; fi
+
+# configuration variables
+Debug "BMC                  = ${BMC}" 5
+Debug "UNIQ                 = ${UNIQ}" 5
+Debug "TMPFILE              = ${TMPFILE}" 5
+Debug "PASSWD               = ${PASSWD}" 5
+Debug "USERID               = ${USERID}" 5
+
+# do something
+
+if [ $BMC_FLAG -eq 1 ] && [ $INFO_FLAG -eq 1 ]; then
+    CMD="ipmitool -H $BMC -U $USERID -P $PASSWD mc info"
+    Debug "CMD='$CMD'"
+    echo "BMC                       : $BMC"
+    $CMD
+    RC=$?
+    if [ $RC -ne 0 ]; then Aborting "$CMD failed"; fi
+    CMD="ipmitool -H $BMC -U $USERID -P $PASSWD lan print"
+    Debug "CMD='$CMD'"
+    $CMD
+    RC=$?
+    if [ $RC -ne 0 ]; then Aborting "$CMD failed"; fi
+    CMD="ipmitool -H $BMC -U $USERID -P $PASSWD power status"
+    Debug "CMD='$CMD'"
+    $CMD
+    RC=$?
+    if [ $RC -ne 0 ]; then Aborting "$CMD failed"; fi
+fi
+
+if [ $BMC_FLAG -eq 1 ] && [ $RESET_FLAG -eq 1 ]; then
+    CMD="ipmitool -H $BMC -U $USERID -P $PASSWD mc reset cold"
+    Debug "CMD='$CMD'"
+    $CMD
+    RC=$?
+    if [ $RC -ne 0 ]; then Aborting "$CMD failed"; fi
+fi
+
+TERM=ansi
+export TERM
+
+CMD="ipmitool -H $BMC -U $USERID -P $PASSWD isol activate"
+Debug "CMD='$CMD'"
+$CMD
+RC=$?
+if [ $RC -ne 0 ]; then Aborting "$CMD failed"; fi
+
+Stop 0

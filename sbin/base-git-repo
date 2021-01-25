@@ -1,0 +1,64 @@
+#!/bin/bash
+
+# jtingiris
+
+Base_Home_Git_Repo_Dir="/home/git/repo"
+
+function aborting() {
+    echo
+    echo "aborting ... $1"
+    echo
+    exit 3
+}
+
+Base_Git_Dir="$1"
+
+function usage() {
+    echo
+    echo "usage: $0 <directory>"
+    echo
+    exit 2
+}
+
+function warning() {
+    echo
+    echo "WARNING: $1"
+    echo
+}
+
+Base_Git_Dir="$1"
+Base_Git_Dir=$(readlink -e "$Base_Git_Dir")
+
+if [ "$Base_Git_Dir" == "" ]; then
+    usage
+fi
+
+if [ ! -d "$Base_Home_Git_Repo_Dir" ]; then
+    aborting "$HOSTNAME:$Base_Home_Git_Repo_Dir directory not found (try running from atl-cnc01)"
+fi
+
+if [ ! -d "$Base_Git_Dir" ]; then
+    if [ ! -a "$Base_Git_Dir" ]; then
+        aborting "$Base_Git_Dir directory not found (i.e. create, or svn up it first)"
+    else
+        aborting "$Base_Git_Dir exists but is not a directory"
+    fi
+fi
+
+Base_Git_Repo_Dir="${Base_Home_Git_Repo_Dir}${Base_Git_Dir}"
+
+# some checks ..
+if [ ! -d "$Base_Git_Repo_Dir" ]; then
+    mkdir -p ${Base_Git_Repo_Dir}
+    if [ $? -ne 0 ]; then
+        aborting "'mkdir -p ${Base_Git_Repo_Dir}' failed"
+    fi
+else
+    if [ -a "${Base_Git_Repo_Dir}/HEAD" ]; then
+        aborting "$Base_Git_Repo_Dir git repo already exists"
+    fi
+fi
+
+git init --bare "${Base_Git_Repo_Dir}"
+
+chown -R git:git "${Base_Home_Git_Repo_Dir}"

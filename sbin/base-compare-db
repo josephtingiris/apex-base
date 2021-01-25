@@ -1,0 +1,300 @@
+#!/bin/bash
+
+# This script will ... compare a same named database across multiple mariadb servers
+
+# 20140920, joseph.tingiris@gmail.com
+# 20150621, joseph.tingiris@gmail.com, revised (new naming convention & organization)
+
+# For coding conventions, organization, standards, & references, see: /base/README
+
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+
+INCLUDE_FILE="base.bash"
+INCLUDE_FOUND=0
+INCLUDE_PATHS="$(dirname $0) $(pwd)"
+for INCLUDE_PATH in $INCLUDE_PATHS; do
+    if [ $INCLUDE_FOUND -eq 1 ]; then break; fi
+    while [ ! -z "$INCLUDE_PATH" ]; do
+        if [ "$INCLUDE_PATH" == "." ]; then INCLUDE_PATH=$(pwd -L .); fi
+        if [ "$INCLUDE_PATH" == "/" ]; then break; fi
+        if [ -r "$INCLUDE_PATH/include/$INCLUDE_FILE" ] && [ ! -d "$INCLUDE_PATH/include/$INCLUDE_FILE" ]; then
+            INCLUDE_FOUND=1
+            source "$INCLUDE_PATH/include/$INCLUDE_FILE"
+            Debug "sourced $INCLUDE_PATH/include/$INCLUDE_FILE" 500
+            unset INCLUDE_PATH INCLUDE_FILE
+            break
+        else
+            INCLUDE_PATH=`dirname "$INCLUDE_PATH"`
+        fi
+    done
+done
+if [ $INCLUDE_FOUND -ne 1 ]; then echo "can't find $INCLUDE_FILE"; exit 1; fi
+
+# GLOBAL_VARIABLES
+
+# explicit strings
+
+DEFAULT_DATE=`date +%Y%m%d`
+
+if [ -r "${BASE_DIR}/etc/$(basename $0).conf" ]; then
+    source "${BASE_DIR}/etc/$(basename $0).conf"
+else
+    if [ -r "${BASE_DIR}/etc/base-backup-db.conf" ]; then
+        source "${BASE_DIR}/etc/base-backup-db.conf"
+    else
+        export DEFAULT_DB_HOSTS="localhost"
+        export DEFAULT_DB_NAMES=""
+        export DEFAULT_DB_TABLES=""
+        export DEFAULT_DB_PASS=""
+        export DEFAULT_DB_USER="$USER"
+    fi
+fi
+DEFAULT_DB=""
+DEFAULT_DB_NAME="mysql"
+DEFAULT_DB_HOSTS="atl-crc01 atl-qacrc01 atl-devcrc01"
+
+# explicit integers (0=off)
+
+declare -i DB_FULL_FLAG=0
+declare -i DB_HOSTS_FLAG=0
+declare -i DB_INSERT_FLAG=0
+declare -i DB_NAME_FLAG=0
+declare -i DB_USER_FLAG=0
+
+# Function_Names
+
+function Example() {
+    Debug_Function $@
+
+    # begin function logic
+
+    local example_arg="$1"
+    local example_variable="example variable"
+
+    Debug_Variable example_variable 2
+
+    echo "example_arg=$example_arg, example_variable=$example_variable"
+
+    # end function logic
+
+    Debug_Function $@
+}
+
+function Usage() {
+    Debug_Function $@
+
+    # begin function logic
+
+    echo
+    echo "usage: $0 <options>"
+    echo
+    echo "options:"
+    echo
+    echo "  -D | --debug [level]        = print debug messages (less than) [level]"
+    echo "  -H | --help                 = this message"
+    echo
+    echo "  --database <value>          = use the given database name [DEFAULT=$DEFAULT_DB_NAME]"
+    echo "  --hosts <value>             = use the given database host name(s) [DEFAULT=$DEFAULT_DB_HOSTS]"
+    echo "  --password <value>          = use the given database password [DEFAULT=none]"
+    echo "  --user <value>              = use the given database user name [DEFAULT=$DEFAULT_DB_USER]"
+    echo
+    echo "  --full                      = display full diff [DEFAULT=$DEFAULT_DB_HOSTS]"
+    echo "  --insert                    = diff INSERT data rows too [DEFAULT=$DEFAULT_DB_HOSTS]"
+    echo
+    echo "  --verbose                   = increase verbosity"
+    echo
+    if [ "$1" != "" ]; then
+        echo "NOTE: $1"
+        echo
+    fi
+
+    # end function logic
+
+    Debug_Function $@
+
+    Stop 1
+}
+
+# Validation Logic
+
+# typically, Upgrade before Options, Start, etc
+#Upgrade "$0" "/base/bin /usr/local/bin"
+
+# Options Logic
+
+# call the base Options function (to process --debug, -debug, --help, -help, --usage, -usage, --verbose, -verbose)
+Options $@
+
+# expand upon the base Options function (careful, same named switches will be processed twice)
+
+# for each command line argument, evaluate them case by case, process them, and shift to the next
+for ((ARGUMENT=1; ARGUMENT <= $ARGUMENTS_TOTAL; ARGUMENT++)); do
+    case "$1" in
+        -H | --H)
+            ARGUMENT_OPTION=("--help")
+            Options ${ARGUMENT_OPTION[@]}
+            unset ARGUMENT_OPTION
+        ;;
+        -D | --D)
+            if [ "$2" != "" ] && [ ${2:0:1} != "-" ]; then
+                ARGUMENT_OPTION=("--debug $2")
+                shift
+            else
+                ARGUMENT_OPTION=("--debug")
+            fi
+            Options ${ARGUMENT_OPTION[@]}
+            unset ARGUMENT_OPTION
+        ;;
+        --database | -database | --db | -db)
+            DB_NAME_FLAG=1
+            DB_NAME="$2"
+            if [ "$DB_NAME" != "" ] && [ ${DB_NAME:0:1} == "-" ]; then
+                DB_NAME=""
+            fi
+            if [ "$DB_NAME" == "" ]; then
+                Usage "$1 argument requires a given value"
+            else
+                DB_NAME=$2
+                Debug_Variable DEBUG 4 "$1 flag was set"
+                shift
+            fi
+        ;;
+        --example | -example | -e)
+            EXAMPLE_FLAG=1
+            EXAMPLE="$2"
+            if [ "$EXAMPLE" != "" ] && [ ${EXAMPLE:0:1} == "-" ]; then
+                EXAMPLE=""
+            fi
+            if [ "$EXAMPLE" == "" ]; then
+                Usage "$1 argument requires a given value"
+            else
+                declare -i EXAMPLE=$2
+                Debug_Variable DEBUG 4 "$1 flag was set"
+                shift
+            fi
+        ;;
+        --hosts | -hosts | --host | -host | -h)
+            DB_HOSTS_FLAG=1
+            if [ "$DB_HOSTS" != "" ] && [ ${DB_HOSTS:0:1} == "-" ]; then
+                DB_HOSTS=""
+            fi
+            if [ "$DB_HOSTS" == "" ]; then
+                Usage "$1 argument requires a given value"
+            else
+                DB_HOSTS=$2
+                Debug_Variable DEBUG 4 "$1 flag was set"
+                shift
+            fi
+        ;;
+        --full | -full | --full | -full | -f)
+            DB_FULL_FLAG=1
+            Debug_Variable DEBUG 4 "$1 flag was set"
+        ;;
+        --insert | -insert | --insert | -insert | -i)
+            DB_INSERT_FLAG=1
+            Debug_Variable DEBUG 4 "$1 flag was set"
+        ;;
+        --password | -password | --passwd | -passwd | -p)
+            DB_PW_FLAG=1
+            DB_PW="$2"
+            if [ "$DB_PW" != "" ] && [ ${DB_PW:0:1} == "-" ]; then
+                DB_PW=""
+            fi
+            if [ "$DB_PW" == "" ]; then
+                Usage "$1 argument requires a given value"
+            else
+                DB_PW=$2
+                Debug_Variable DEBUG 4 "$1 flag was set"
+                shift
+            fi
+        ;;
+        --user | -user | -u)
+            DB_USER_FLAG=1
+            DB_USER="$2"
+            if [ "$DB_USER" != "" ] && [ ${DB_USER:0:1} == "-" ]; then
+                DB_USER=""
+            fi
+            if [ "$DB_USER" == "" ]; then
+                Usage "$1 argument requires a given value"
+            else
+                DB_USER=$2
+                Debug_Variable DEBUG 4 "$1 flag was set"
+                shift
+            fi
+        ;;
+        *)
+            # unknown flags
+            if [ "$1" != "" ] && [ $OPTION -eq 0 ]; then
+                echo "unknown flag '$1'"
+                Stop 2 # not absolutely necessary, but does enforce proper usage
+            fi
+        ;;
+    esac
+    shift
+done
+
+#echo "ARGUMENTS=$ARGUMENTS"
+
+# e.g., if there are no arguments, echo a usage message and/or exit
+if [ $ARGUMENTS_TOTAL -eq 0 ]; then Usage; fi
+
+# Main Logic
+
+Start
+
+# do something
+
+if [ "$DB_HOSTS" == "" ]; then
+    DB_HOSTS=$DEFAULT_DB_HOSTS
+fi
+
+if [ "$DB_NAME" == "" ]; then
+    DB_NAME=$DEFAULT_DB_NAME
+fi
+
+if [ "$DB_PW" == "" ]; then
+    DB_PW=$DEFAULT_DB_PW
+fi
+
+if [ "$DB_USER" == "" ]; then
+    DB_USER=$DEFAULT_DB_USER
+fi
+
+Debug_Variable "DB_HOSTS" 1
+Debug_Variable "DB_NAME" 1
+Debug_Variable "DB_USER" 1
+
+for DB_HOST in $DB_HOSTS; do
+    DB_DUMP=${TMPFILE}.$DB_HOST
+    Debug_Variable "DB_HOST" 1
+    Debug_Variable "DB_DUMP" 1
+    mysqldump -h $DB_HOST -u $DB_USER --password=$DB_PW --databases $DB_NAME > $DB_DUMP
+done
+
+for DB_HOST_A in $DB_HOSTS; do
+    DB_DUMP_A=${TMPFILE}.$DB_HOST_A
+    if [ -f $DB_DUMP_A ]; then
+        for DB_HOST_B in $DB_HOSTS; do
+            DB_DUMP_B=${TMPFILE}.$DB_HOST_B
+            if [ -f $DB_DUMP_B ] && [ "$DB_DUMP_B" != "$DB_DUMP_A" ]; then
+                echo comparing "$DB_DUMP_A and $DB_DUMP_B"
+                echo "vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv"
+                if [ $DB_INSERT_FLAG -eq 0 ]; then
+                    diff "$DB_DUMP_A" "$DB_DUMP_B" | egrep -ve 'INSERT\ INTO'
+                else
+                    if [ $DB_FULL_FLAG -eq 0 ]; then
+                        diff "$DB_DUMP_A" "$DB_DUMP_B" | cut -c -140
+                    else
+                        diff "$DB_DUMP_A" "$DB_DUMP_B"
+                    fi
+                fi
+                echo "^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"
+                echo
+                echo
+            fi
+        done
+        rm $DB_DUMP_A
+    fi
+done
+
+Stop 0

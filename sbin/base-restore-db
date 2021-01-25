@@ -1,0 +1,412 @@
+#!/bin/bash
+
+# This script will ... restore (mysqldump) and archive database(s) and table(s)
+
+# 20140920, jtingiris
+
+# For coding conventions, organization, standards, & references, see: /base/README
+
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+
+INCLUDE_FILE="base.bash"
+INCLUDE_FOUND=0
+INCLUDE_PATHS="$(dirname $0) $(pwd)"
+for INCLUDE_PATH in $INCLUDE_PATHS; do
+    if [ $INCLUDE_FOUND -eq 1 ]; then break; fi
+    while [ ! -z "$INCLUDE_PATH" ]; do
+        if [ "$INCLUDE_PATH" == "." ]; then INCLUDE_PATH=$(pwd -L .); fi
+        if [ "$INCLUDE_PATH" == "/" ]; then break; fi
+        if [ -r "$INCLUDE_PATH/include/$INCLUDE_FILE" ] && [ ! -d "$INCLUDE_PATH/include/$INCLUDE_FILE" ]; then
+            INCLUDE_FOUND=1
+            source "$INCLUDE_PATH/include/$INCLUDE_FILE"
+            Debug "sourced $INCLUDE_PATH/include/$INCLUDE_FILE" 500
+            unset INCLUDE_PATH INCLUDE_FILE
+            break
+        else
+            INCLUDE_PATH=`dirname "$INCLUDE_PATH"`
+        fi
+    done
+done
+if [ $INCLUDE_FOUND -ne 1 ]; then echo "can't find $INCLUDE_FILE"; exit 1; fi
+
+set -f
+
+# GLOBAL_VARIABLES
+
+# explicit strings
+
+DEFAULT_DB_BACKUP_FILE=""
+
+if [ -r "${BASE_DIR}/etc/$(basename $0).conf" ]; then
+    source "${BASE_DIR}/etc/$(basename $0).conf"
+else
+    export DEFAULT_DB_HOSTS="localhost"
+    export DEFAULT_DB_NAMES=""
+    export DEFAULT_DB_PASS=""
+    export DEFAULT_DB_USER="$USER"
+fi
+
+# explicit integers (0=off)
+
+declare -l DB_ARCHIVE_EXTENSION="dump.sql"
+
+declare -i DB_DUMP_FLAG=0
+declare -i DB_HOSTS_FLAG=0
+declare -i DB_NAMES_FLAG=0
+declare -i DB_SUFFIX_FLAG=0
+declare -i DB_USER_FLAG=0
+
+declare -i RC=0
+
+# Function_Names
+
+# DB_Restore "$DB_HOST" "$DB_NAME" "$DB_SUFFIX"
+function DB_Restore() {
+    local db_host="$1"
+    local db_localhost=0
+
+    if [ "$db_host" == "" ]; then
+        return 1
+    fi
+
+    if [ "$db_host" == "localhost" ] || [ "$db_host" == "127.0.0.1" ]; then
+        local db_localhost=1
+    fi
+
+    if [ $db_localhost -eq 1 ]; then
+        local ps_mysqld=$(ps -ef | grep /usr/bin/mysqld 2> /dev/null | grep -v grep)
+        if [ "$ps_mysqld" == "" ]; then
+            Aborting "mysql is not running on localhost"
+        fi
+    fi
+
+    local database="$2"
+
+    local suffix="$3"
+    local database_to
+
+    if [ ${#database} -gt 0 ]; then
+        if [ ${#suffix} -eq 0 ]; then
+            database_to=${database}
+        else
+            database_to=${database}_${suffix}
+        fi
+    fi
+
+    local message="`date`, Restore from '$DB_DUMP_FILE'"
+    if [ ${#database} -gt 0 ]; then
+        message+=", Database: '$database'\n"
+    else
+        message+=", Database: ALL\n"
+    fi
+
+    message+="`date`, Restore to   '$db_host'"
+    if [ ${#database_to} -gt 0 ]; then
+        message+=", Database: '$database_to'\n"
+    else
+        if [ ${#suffix} -gt 0 ]; then
+            message+=", Database Suffix: '$suffix'\n"
+        else
+            message+="\n"
+        fi
+    fi
+
+    printf "$message\n"
+
+    if [ -r "$DB_DUMP_FILE" ]; then
+        ls -lh "$DB_DUMP_FILE"
+
+        if [ ${#database} -eq 0 ] && [ ${#database_to} -eq 0 ]; then
+            if [ ${#suffix} -eq 0 ]; then
+                Question "Are you sure you want to restore ALL databases? "
+                if [ "$QUESTION_FLAG" -eq 1 ]; then
+                    echo "$DB_DUMP_STDOUT $DB_DUMP_FILE | $MYSQL_CMD"
+                else
+                    echo "NOTICE !!! databases NOT restored"
+                    return 1
+                fi
+            else
+                Question "Are you sure you want to restore ALL databases with a new suffix of '${suffix}'? "
+                if [ "$QUESTION_FLAG" -eq 1 ]; then
+                    local suffix_database
+                    local suffix_databases=$($DB_DUMP_STDOUT "$DB_DUMP_FILE" | sed -nEe 's#^-- Current Database: `(.*)`#\1#p' 2> /dev/null | sort -u)
+                    for suffix_database in ${suffix_databases[@]}; do
+                        database=${suffix_database}
+                        database_to=${suffix_database}_${suffix}
+                        echo
+                        echo "Restoring dump data from='${database}' and converting to='${database_to}' ..."
+                        $DB_DUMP_STDOUT "$DB_DUMP_FILE" | sed -n "/^-- Current Database: \`${database}\`/,/^-- Current Database: \`/{ /^-- Current Database: \`${database}\`/d; /^-- Current Database: \`/d; p; }" | sed -e "/^CREATE DATABASE/ s=\`${database}\`=\`${database_to}\`=" -e "/^CREATE TABLE/ s=\`${database}\`=\`${database_to}\`=" -e "/^USE / s=\`${database}\`=\`${database_to}\`=" -e "/^-- / s=\`${database}\`=\`${database_to}\`=" -e "/^INSERT INTO \`proc\`/s='${database}'='${database_to}'=" | $MYSQL_CMD
+                    done
+                    unset -v database database_to
+                else
+                    echo "NOTICE !!! databases NOT restored"
+                    return 1
+                fi
+            fi
+        else
+            Question "Are you sure you want to restore database '${database}' to '${database_to}'? "
+            if [ "$QUESTION_FLAG" -eq 1 ]; then
+                echo
+                echo "Restoring dump data from='${database}' and converting to='${database_to}' ..."
+                $DB_DUMP_STDOUT "$DB_DUMP_FILE" | sed -n "/^-- Current Database: \`${database}\`/,/^-- Current Database: \`/{ /^-- Current Database: \`${database}\`/d; /^-- Current Database: \`/d; p; }" | sed -e "/^CREATE DATABASE/ s=\`${database}\`=\`${database_to}\`=" -e "/^CREATE TABLE/ s=\`${database}\`=\`${database_to}\`=" -e "/^USE / s=\`${database}\`=\`${database_to}\`=" -e "/^-- / s=\`${database}\`=\`${database_to}\`=" -e "/^INSERT INTO \`proc\`/s='${database}'='${database_to}'=" | $MYSQL_CMD
+
+            else
+                echo "NOTICE !!! database '$database' to '$database_to' NOT restored"
+                return 1
+            fi
+        fi
+    fi
+
+    #echo $MYSQL_CMD
+}
+
+function Usage() {
+    Debug_Function $@
+
+    # begin function logic
+
+    echo
+    echo "usage: $0 <options>"
+    echo
+    echo "options:"
+    echo
+    echo "  -D | --debug [level]        = print debug messages (less than) [level]"
+    echo "  -H | --help                 = this message"
+    echo
+    echo "  --hosts <value>             = use the given database host name(s) to restore to [DEFAULT=$DEFAULT_DB_HOSTS]"
+    echo "  --password <value>          = use the given database password [DEFAULT=none]"
+    echo "  --user <value>              = use the given database user name [DEFAULT=$DEFAULT_DB_USER]"
+    echo
+    echo "  --suffix <value>            = append a suffix to the restored databases [DEFAULT=none]"
+    echo
+    echo "  --dump <file>              = use the given database backup file"
+    echo
+    echo "  --databases <value>         = restore the given database name(s) from the dump file [DEFAULT=all databases]"
+    echo
+    if [ "$1" != "" ]; then
+        echo "NOTE: $1"
+        echo
+    fi
+
+    # end function logic
+
+    Debug_Function $@
+
+    Stop 1
+}
+
+# Validation Logic
+
+# Options Logic
+
+# call the base Options function (to process --debug, -debug, --help, -help, --usage, -usage, --verbose, -verbose)
+Options $@
+
+# expand upon the base Options function (careful, same named switches will be processed twice)
+
+# for each command line argument, evaluate them case by case, process them, and shift to the next
+for ((ARGUMENT=1; ARGUMENT <= $ARGUMENTS_TOTAL; ARGUMENT++)); do
+    case "$1" in
+        -H | --H)
+            ARGUMENT_OPTION=("--help")
+            Options ${ARGUMENT_OPTION[@]}
+            unset ARGUMENT_OPTION
+            ;;
+        -D | --D)
+            if [ "$2" != "" ] && [ ${2:0:1} != "-" ]; then
+                ARGUMENT_OPTION=("--debug $2")
+                shift
+            else
+                ARGUMENT_OPTION=("--debug")
+            fi
+            Options ${ARGUMENT_OPTION[@]}
+            unset ARGUMENT_OPTION
+            ;;
+        --databases | -databases | --db | -db)
+            DB_NAMES_FLAG=1
+            DB_NAMES="$2"
+            if [ "$DB_NAMES" != "" ] && [ ${DB_NAMES:0:1} == "-" ]; then
+                DB_NAMES=""
+            fi
+            if [ "$DB_NAMES" == "" ]; then
+                Usage "$1 argument requires a given value"
+            else
+                DB_NAMES=$2
+                Debug_Variable DB_NAMES 4 "$1 flag was set"
+                shift
+            fi
+            ;;
+        --dump | -dump | --d | -d)
+            DB_DUMP_FLAG=1
+            DB_DUMP_FILE="$2"
+            if [ "$DB_DUMP_FILE" != "" ] && [ ${DB_DUMP_FILE:0:1} == "-" ]; then
+                DB_DUMP_FILE=""
+            fi
+            if [ "$DB_DUMP_FILE" == "" ]; then
+                Usage "$1 argument requires a given value"
+            else
+                DB_DUMP_FILE=$2
+                Debug_Variable DB_DUMP_FILE 4 "$1 flag was set"
+                shift
+            fi
+            ;;
+        --hosts | -hosts | --host | -host | -h)
+            DB_HOSTS_FLAG=1
+            DB_HOSTS="$2"
+            if [ "$DB_HOSTS" != "" ] && [ ${DB_HOSTS:0:1} == "-" ]; then
+                DB_HOSTS=""
+            fi
+            if [ "$DB_HOSTS" == "" ]; then
+                Usage "$1 argument requires a given value"
+            else
+                DB_HOSTS=$2
+                Debug_Variable DB_HOSTS_FLAG 4 "$1 flag was set"
+                shift
+            fi
+            ;;
+        --password | -password | --passwd | -passwd | -p)
+            DB_PASS_FLAG=1
+            DB_PASS="$2"
+            if [ "$DB_PASS" != "" ] && [ ${DB_PASS:0:1} == "-" ]; then
+                DB_PASS=""
+            fi
+            if [ "$DB_PASS" == "" ]; then
+                Usage "$1 argument requires a given value"
+            else
+                DB_PASS=$2
+                Debug_Variable DB_PASS_FLAG 4 "$1 flag was set"
+                shift
+            fi
+            ;;
+        --suffix | -suffix | --suffix | -suffix | -s)
+            DB_SUFFIX_FLAG=1
+            DB_SUFFIX="$2"
+            if [ "$DB_SUFFIX" != "" ] && [ ${DB_SUFFIX:0:1} == "-" ]; then
+                DB_SUFFIX=""
+            fi
+            if [ "$DB_SUFFIX" == "" ]; then
+                Usage "$1 argument requires a given value"
+            else
+                DB_SUFFIX=$2
+                Debug_Variable DB_SUFFIX_FLAG 4 "$1 flag was set"
+                shift
+            fi
+            ;;
+        --user | -user | -u)
+            DB_USER_FLAG=1
+            DB_USER="$2"
+            if [ "$DB_USER" != "" ] && [ ${DB_USER:0:1} == "-" ]; then
+                DB_USER=""
+            fi
+            if [ "$DB_USER" == "" ]; then
+                Usage "$1 argument requires a given value"
+            else
+                DB_USER=$2
+                Debug_Variable DB_USER_FLAG 4 "$1 flag was set"
+                shift
+            fi
+            ;;
+        --yes | -yes | -y)
+            YES_FLAG=1
+            ;;
+        *)
+            # unknown flags
+            if [ "$1" != "" ] && [ $OPTION -eq 0 ]; then
+                echo "unknown flag '$1'"
+                Stop 2 # not absolutely necessary, but does enforce proper usage
+            fi
+            ;;
+    esac
+    shift
+done
+
+# e.g., if there are no arguments, echo a usage message and/or exit
+if [ $ARGUMENTS_TOTAL -eq 0 ]; then Usage; fi
+
+# Main Logic
+
+Start
+
+if [ "$DB_HOSTS" == "" ]; then
+    DB_HOSTS=$DEFAULT_DB_HOSTS
+fi
+
+if [ "$DB_NAMES" == "" ]; then
+    DB_NAMES=$DEFAULT_DB_NAME
+fi
+
+if [ "$DB_PASS" == "" ]; then
+    DB_PASS=$DEFAULT_DB_PASS
+fi
+
+if [ "$DB_PASS" == "no" ]; then
+    DB_PASS=""
+fi
+
+if [ "$DB_USER" == "" ]; then
+    DB_USER=$DEFAULT_DB_USER
+fi
+
+BACKUP_DATE=`date +%Y%m%d`
+if [ "$BACKUP_DATE" == "" ]; then
+    Aborting "can't set restore date" 2
+fi
+Debug_Variable "BACKUP_DATE" 1
+
+Debug_Variable "DB_HOSTS" 1
+Debug_Variable "DB_NAMES" 1
+Debug_Variable "DB_USER" 1
+
+if [ ! -r "$DB_DUMP_FILE" ]; then
+    Aborting "$DB_DUMP_FILE file not readable"
+fi
+Debug_Variable "DB_DUMP_FILE" 1
+
+if file "$DB_DUMP_FILE" | grep gzip &> /dev/null; then
+    DB_DUMP_STDOUT="gunzip -c"
+else
+    if file "$DB_DUMP_FILE" | grep ASCII &> /dev/null; then
+        DB_DUMP_STDOUT="cat"
+    else
+        Aborting "$DB_DUMP_FILE dump file is of an unknown type (not gzip or ASCII)"
+    fi
+fi
+Debug_Variable "DB_DUMP_STDOUT" 1
+
+Debug_Variable "DB_SUFFIX" 1
+
+for DB_HOST in $DB_HOSTS; do
+    Debug "-------------------------------------------------------------" 2
+    Debug_Variable "DB_HOST" 1
+
+    MYSQL_CMD="mysql --host=$DB_HOST --user=$DB_USER --password=$DB_PASS"
+    Debug_Variable "MYSQL_CMD" 20
+
+    DATABASES=`echo "show databases;" | $MYSQL_CMD --skip-column-names`
+    RC=$?
+    if [ $RC -ne 0 ]; then
+        Warning "could not connect to database on $DB_HOST"
+        continue
+    fi
+
+    if [ "$DB_NAMES" == "" ]; then
+        DB_Restore "$DB_HOST" "" "$DB_SUFFIX"
+    else
+        for DB_NAME in $DB_NAMES; do
+            Debug "DB_NAME=$DB_NAME, DB_SUFFIX=$DB_SUFFIX" 3
+            for DATABASE in ${DATABASES[@]}; do
+                if [ "$DB_SUFFIX" == "" ] && [ "$DATABASE" == "${DB_NAME}" ]; then
+                    Warning "database '$DB_NAME' already exists on $DB_HOST"
+                    sleep 10
+                fi
+                if [ "$DB_SUFFIX" != "" ] && [ "$DATABASE" == "${DB_NAME}_${DB_SUFFIX}" ]; then
+                    Warning "database '${DB_NAME}_${DB_SUFFIX}' already exists on $DB_HOST"
+                    sleep 10
+                fi
+            done
+            DB_Restore "$DB_HOST" "$DB_NAME" "$DB_SUFFIX"
+        done
+    fi
+done
+
+Stop $RC

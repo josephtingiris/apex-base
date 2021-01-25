@@ -1,0 +1,717 @@
+#!/bin/bash
+
+# Open Vulnerability Assessment System Script And L?
+
+# 20160121, joseph.tingiris@gmail.com
+
+# NOTES:
+#
+# This was initially purpose written for CentOS release 7
+
+# GLOBALS
+
+ARGUMENTS=$@
+declare -i ARGUMENTS_TOTAL=$#
+
+DEFAULT_CNC_SERVER="cnc"
+
+DEFAULT_DAEMONS="redis openvassd openvasmd gsad"
+
+DEFAULT_GSA_PASSWORD="Sc@nn3r5"
+DEFAULT_GSA_PORT="3333"
+DEFAULT_GSA_USER="root"
+
+CHECK_FLAG=0
+CNC_SERVER_FLAG=0
+INSTALL_FLAG=0
+GSA_PASSWORD_FLAG=0
+GSA_PORT_FLAG=0
+GSA_USER_FLAG=0
+RESTART_FLAG=0
+START_FLAG=0
+STATUS_FLAG=0
+STOP_FLAG=0
+SYNC_FLAG=0
+
+PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+# Functions
+
+function Aborting() {
+
+    exit_message="$1"
+    if [ "$exit_message" == "" ]; then exit_message="unknown error"; fi
+    local -i exit_code=$2
+    if [ $exit_code -eq 0 ]; then exit_code=1; fi
+    echo
+    echo "Aborting, $exit_message"
+    echo
+    exit $exit_code
+
+}
+
+function Warning() {
+
+    warning_message="$1"
+    local -i exit_code=$2
+    if [ $exit_code -eq 0 ]; then exit_code=1; fi
+    echo
+    echo "Warning, $warning_message"
+    echo
+
+}
+
+function OpenVAS_Admin() {
+
+    local openvasmd_exec=$(which openvasmd 2>&1 | grep -v ^which:)
+    if [ "$openvasmd_exec" == "" ]; then
+        openvasmd_exec="echo openvasmd"
+    fi
+
+    openvasmd_admin=$($openvasmd_exec --get-users | grep $GSA_USER)
+    if [ "$openvasmd_admin" == "" ]; then
+        if [ $START_FLAG -eq 1 ] || [ $INSTALL_FLAG -eq 1 ]; then
+            OpenVAS_Start openvasmd &> /dev/null
+
+            openvasmd --create-user=$GSA_USER --role=Admin &> /dev/null
+            result_code=$?
+            if [ $result_code -ne 0 ]; then
+                Aborting "openvasmd --create-user $GSA_USER failed with result code $result_code" $result_code
+            fi
+        else
+            echo "MISSING GSA USER $GSA_USER"
+            echo
+        fi
+    fi
+
+    if [ $INSTALL_FLAG -eq 1 ] || ( [ $START_FLAG -eq 1 ] && [ "$GSA_PASSWORD" != "$DEFAULT_GSA_PASSWORD" ] ); then
+        if [ $START_FLAG -eq 1 ]; then
+            echo
+            echo "Updating password for $GSA_USER ..."
+        fi
+        openvasmd --user=$GSA_USER --new-password="$GSA_PASSWORD"
+        result_code=$?
+        if [ $result_code -ne 0 ]; then
+            Aborting "openvasmd --user=$GSA_USER --new-password failed with result code $result_code" $result_code
+        fi
+    fi
+
+}
+
+function OpenVAS_Install_Check() {
+
+    if [ $INSTALL_FLAG -eq 0 ] && [ $CHECK_FLAG -eq 0 ]; then return; fi
+
+    if [ -f /var/run/yum.pid ]; then
+        Aborting "Existing lock /var/run/yum.pid: another copy of yum is apparently running as pid $(cat /var/run/yum.pid)."
+    fi
+
+    if [ ! -d /etc/yum.repos.d ]; then
+        Aborting "/etc/yumd.repos.d is missing"
+    else
+        verify_repos=$(find /etc/yum.repos.d -maxdepth 1 -type f)
+
+        for verify_repo in $verify_repos; do
+            valid_repo=$(cat "$verify_repo" | grep baseurl | egrep -v "^#|redhat.com|centos.org|fedoraproject.org|mariadb.org|file:\/\/")
+            if [ "$valid_repo" != "" ]; then
+                Warning "this machine has unverified yum repos installed ($verify_repo)"
+            fi
+        done
+    fi
+
+    if [ $INSTALL_FLAG -eq 1 ]; then
+        echo "Installing OpenVAS ..."
+        echo
+
+        OpenVAS_Stop
+
+        CHECK_FLAG=1
+
+        # Always do this first; it will allow SELinux to be permissive (allow, but log) on a machine where it's configured to be enforced
+        if [ "$(grep ^SELINUX= /etc/selinux/config | awk -F= '{print $NF}' | grep -i enforcing)" != "" ]; then
+            echo "SELinux is being set to permissive."
+            setenforce Permissive
+        fi
+
+        echo
+
+        # do this last; it will enable SELinux on a machine where it's configured to be enforced
+        if [ "$(grep ^SELINUX= /etc/selinux/config | awk -F= '{print $NF}' | grep -i enforcing)" != "" ]; then
+            echo "SELinux is being set to enforcing."
+            setenforce Enforcing
+        fi
+
+    fi
+
+    if [ $CHECK_FLAG -eq 1 ] || [ $INSTALL_FLAG -eq 1 ]; then
+        echo "Checking OpenVAS ..."
+        echo
+
+        #STATUS_FLAG=1
+
+        echo "$0 for $(hostname) on $(date)"
+        echo
+        echo $EL_RELEASE
+        echo
+
+        echo "Installed yum repositories:"
+        echo
+        yum repolist --quiet
+        result_code=$?
+        if [ $result_code -ne 0 ]; then
+            yum repolist
+            Aborting "yum repolist failed with result code $result_code" $result_code
+        fi
+        echo
+
+        echo "Verifying required packages:"
+        echo
+        # make sure all of the vas depenedency packages are installed, one at a time (order dependent)
+        packages="epel-release redis rsync openvas-cli openvas-scanner openvas-manager openvas-gsa"
+        packages_installed=0
+
+        for package in $packages; do
+            package_installed=$(yum --quiet list "$package" --quiet 2>&1 | grep -i install)
+            if [ "$package_installed" == "" ]; then
+                if [ $INSTALL_FLAG -eq 1 ]; then
+                    yum -y install "$package" --quiet
+                    result_code=$?
+                    if [ $result_code -eq 0 ]; then
+                        echo "installed $package"
+                        echo
+                        packages_installed=1
+                    else
+                        Aborting "failed to properly install $package" $result_code
+                    fi
+                else
+                    echo "MISSING $package"
+                    echo
+                fi
+            else
+                echo "found $package"
+                echo
+            fi
+        done
+
+        # if any new packages were installed then clean and remake the yum cache
+        if [ $packages_installed -ne 0 ] && [ $INSTALL_FLAG -eq 1 ]; then
+            echo "Cleaning and making yum cache ..."
+            echo
+            yum clean all --quiet &> /dev/null
+            result_code=$?
+            if [ $result_code -ne 0 ]; then
+                Aborting "yum clean all failed with result code $result_code" $result_code
+            fi
+            yum makecache --quiet &> /dev/null
+            result_code=$?
+            if [ $result_code -ne 0 ]; then
+                Aborting "yum makecache failed with result code $result_code" $result_code
+            fi
+        fi
+
+        if [ ! -f /etc/redis.conf ]; then
+            if [ $INSTALL_FLAG -eq 1 ]; then
+                Aborting "/etc/redis.conf file not found"
+            else
+                echo "MISSING /etc/redis.conf"
+                echo
+            fi
+        else
+            redis_unixsocket=$(cat /etc/redis.conf | grep ^unixsocket\  )
+            if [ "$redis_unixsocket" == "" ]; then
+                if [ $INSTALL_FLAG -eq 1 ]; then
+                    echo "unixsocket /tmp/redis.sock" >> /etc/redis.conf
+                else
+                    echo "MISSING /etc/redis.conf unixsocket /tmp/redis.sock"
+                    echo
+                fi
+            fi
+            redis_unixsocketperm=$(cat /etc/redis.conf | grep ^unixsocketperm\  )
+            if [ "$redis_unixsocketperm" == "" ]; then
+                if [ $INSTALL_FLAG -eq 1 ]; then
+                    echo "unixsocketperm 700" >> /etc/redis.conf
+                else
+                    echo "MISSING /etc/redis.conf unixsocketperm 700"
+                    echo
+                fi
+            fi
+        fi
+
+        if [ ! -f /etc/pki/openvas/CA/cacert.pem ] || [ ! -f /etc/pki/openvas/private/CA/cakey.pem ] || [ ! -f /etc/pki/openvas/CA/servercert.pem ] || [ ! -f /etc/pki/openvas/private/CA/serverkey.pem ]; then
+            if [ $INSTALL_FLAG -eq 1 ]; then
+                openvas-mkcert -f # answer the questions; can be pretty much anything; the cert is self signed
+                result_code=$?
+                if [ $result_code -ne 0 ]; then
+                    Aborting "openvas-mkcert failed with result code $result_code" $result_code
+                fi
+            else
+                echo "MISSING openvas ca or servert certificates"
+                echo
+            fi
+        fi
+
+        if [ ! -f /etc/pki/openvas/CA/clientcert.pem ] || [ ! -f /etc/pki/openvas/private/CA/clientkey.pem ]; then
+            if [ $INSTALL_FLAG -eq 1 ]; then
+                openvas-mkcert-client -i # answer the questions; can be pretty much anything; the cert is signed by the openvas ca
+            else
+                echo "MISSING openvas ca or servert certificates"
+                echo
+            fi
+        fi
+
+        if [ ! -d /var/lib/openvas/plugins ] || [ ! -d /var/lib/openvas/scap-data ] || [ ! -d /var/lib/openvas/cert-data ]; then
+            if [ $INSTALL_FLAG -eq 1 ] || [ "$CNC_SERVER" == "skip" ]; then
+                # this will save a LOT of time; rsync from a local machine
+                echo "Syncing plugins from $CNC_SERVER ..."
+                echo
+                rsync -apz root@$CNC_SERVER:/var/lib/openvas/plugins/ /var/lib/openvas/plugins/ &> /dev/null
+                result_code=$?
+                if [ $result_code -ne 0 ]; then
+                    Aborting "plugin sync failed from $CNC_SERVER" 4
+                fi
+                echo "Syncing scap-data from $CNC_SERVER ..."
+                echo
+                rsync -apz root@$CNC_SERVER:/var/lib/openvas/scap-data/ /var/lib/openvas/scap-data/ &> /dev/null
+                result_code=$?
+                if [ $result_code -ne 0 ]; then
+                    Aborting "scap-data sync failed from $CNC_SERVER" 4
+                fi
+                echo "Syncing cert-data from $CNC_SERVER ..."
+                echo
+                rsync -apz root@$CNC_SERVER:/var/lib/openvas/cert-data/ /var/lib/openvas/cert-data/ &> /dev/null
+                result_code=$?
+                if [ $result_code -ne 0 ]; then
+                    Aborting "cert-data sync failed from $CNC_SERVER" 4
+                fi
+            else
+                echo "MISSING /var/lib/openvas data"
+                echo
+            fi
+        fi
+
+        if [ ! -d /var/lib/openvas/plugins ]; then
+            feed_current=""
+        else
+            feed_current=$(openvas-nvt-sync --feed-current | grep Feed\ is\ already\ current)
+        fi
+
+        rebuild_cache=0
+
+        if [ "$feed_current" == "" ] || [ ! -d /var/lib/openvas/scap-data ] || [ ! -d /var/lib/openvas/cert-data ]; then
+            if [ $INSTALL_FLAG -eq 1 ]; then
+                OpenVAS_Sync
+
+                rebuild_cache=1
+            else
+                echo "OpenVAS feeds are NOT current"
+                echo
+            fi
+        else
+            echo "OpenVAS feeds are current"
+            echo
+        fi
+
+        if [ $rebuild_cache -ne 0 ] && [ $INSTALL_FLAG -eq 1 ]; then
+            echo "Rebuilding OpenVAS cache (this will take a while) ..."
+            echo
+
+            OpenVAS_Stop openvasmd
+
+            $openvasm_exec --rebuild
+            result_code=$?
+            if [ $result_code -ne 0 ]; then
+                Aborting "openvasmd --rebuild failed with result code $result_code" $result_code
+            fi
+
+            OpenVAS_Stop openvasmd
+        fi
+
+        OpenVAS_Admin
+
+        if [ "$(OpenVAS_Status | grep is\ not\ running)" == "" ]; then
+            echo "OpenVAS is not running"
+            echo
+        fi
+
+        # verify this system has (at minimum) all of the known os security patches applied
+        yum --security check-update --quiet &> /dev/null
+        result_code=$?
+        if [ $result_code -eq 0 ]; then
+            echo "All relevant yum security updates are applied."
+            echo
+        else
+            if [ $result_code -eq 100 ]; then
+                echo "WARNING !!! Relevant yum security updates exist for this machine !!! WARNING"
+                echo
+                if [ $INSTALL_FLAG -eq 1 ]; then
+                    yum update --security
+                    result_code=$?
+                    if [ $result_code -ne 0 ]; then
+                        Aborting "failed to yum install --security updates" 3
+                    fi
+                    echo
+                    echo "NOTICE !!! If security patches were applied, then don't forget to reboot !!! NOTICE"
+                    echo
+                fi
+            else
+                Aborting "yum --security check-update failed with result code $result_code"
+            fi
+        fi
+
+        START_FLAG=1
+        #openvas-check-setup --server
+    fi
+
+}
+
+function OpenVAS_Start() {
+
+    if [ "$1" == "" ]; then
+        local daemons=$DEFAULT_DAEMONS
+    else
+        local daemons="$1"
+    fi
+    if [ "$daemons" == "" ]; then return; fi
+
+    for daemon in $daemons; do
+        local pid=$(pgrep "$daemon")
+        if [ "$pid" != "" ]; then
+            echo "$daemon already running"
+        else
+            local -i retries=10
+            local -i tries=1
+
+            echo -n "$daemon started"
+            service $daemon start &> /dev/null
+            result_code=$?
+
+            while [ $result_code -ne 0 ]; do
+                let tries=$tries+1
+                if [ $tries -ge $retries ]; then break; fi
+                local daemon_args=""
+                if [ "$daemon" == "gsad" ]; then
+                    daemon_args="--no-redirect --port=$GSA_PORT"
+                    echo -n " $daemon_args"
+                fi
+                local daemon_exec=$(which $daemon 2>&1 | grep -v ^which:)
+                if [ ! -x "$daemon_exec" ]; then
+                    Aborting "$daemon not found or executable" 2
+                fi
+                $daemon_exec $daemon_args
+                result_code=$?
+            done
+            echo -n " OK"
+            if [ $tries -ge 3 ]; then
+                echo -n " ($tries tries)"
+            fi
+            echo
+        fi
+    done
+
+}
+
+function OpenVAS_Status() {
+
+    if [ "$1" == "" ]; then
+        local daemons=$DEFAULT_DAEMONS
+    else
+        local daemons="$1"
+    fi
+    if [ "$daemons" == "" ]; then return; fi
+    echo
+
+    for daemon in $daemons; do
+        echo -n "$daemon"
+        local pid=$(pgrep "$daemon")
+        if [ "$pid" != "" ]; then
+            echo " is running"
+            ps -f --pid $pid
+        else
+            echo " is not running"
+        fi
+        echo
+    done
+
+}
+
+function OpenVAS_Stop() {
+
+    if [ "$1" == "" ]; then
+        local daemons=$DEFAULT_DAEMONS
+    else
+        local daemons="$1"
+    fi
+    if [ "$daemons" == "" ]; then return; fi
+
+    for daemon in $daemons; do
+        local pid=$(pgrep "$daemon")
+        if [ "$pid" != "" ]; then
+            local -i retries=10
+            local -i tries=1
+
+            echo -n "$daemon stopped"
+            service $daemon stop &> /dev/null
+            result_code=$?
+
+            while [ $result_code -ne 0 ]; do
+                let tries=$tries+1
+                if [ $tries -ge $retries ]; then break; fi
+                kill -9 $pid
+                result_code=$?
+            done
+            echo -n " OK"
+            if [ $tries -ge 3 ]; then
+                echo -n " ($tries tries)"
+            fi
+            echo
+        fi
+    done
+
+}
+
+function OpenVAS_Sync() {
+
+    echo "Syncing nvt (this will take a while) ..."
+    echo
+
+    openvas-nvt-sync
+    result_code=$?
+    if [ $result_code -ne 0 ]; then
+        Aborting "openvas-nvt-sync failed with result code $result_code" $result_code
+    fi
+
+    echo "Syncing scapdata (this will take a while) ..."
+    echo
+
+    openvas-scapdata-sync
+    result_code=$?
+    if [ $result_code -ne 0 ]; then
+        Aborting "openvas-scapdata-sync failed with result code $result_code" $result_code
+    fi
+
+    echo "Syncing certdata (this will take a while) ..."
+    echo
+
+    openvas-certdata-sync
+    result_code=$?
+    if [ $result_code -ne 0 ]; then
+        Aborting "openvas-certdata-sync failed with result code $result_code" $result_code
+    fi
+
+}
+
+function Usage() {
+
+    local note="$1"
+
+    echo
+    echo "usage: $0 <options>"
+    echo
+    echo "options:"
+    echo
+    echo "  check | --check                = check everything on this system, but don't make any changes"
+    echo "  install | --install            = check everything on this system and if necessary install, sync, and start openvas"
+    echo "  sync | --sync                  = sync repo data"
+    echo
+    echo "  restart | --restart            = start/stop all daemons"
+    echo "  start | --start                = start necessary daemons"
+    echo "  status | --status              = status of all daemons"
+    echo "  stop | --stop                  = stop running daemons"
+    echo
+    echo "  --cnc-server <host>            = specify server host to initially sync the openvas database from [default=$DEFAULT_CNC_SERVER]"
+    echo
+    echo "  --gsa-password <password>      = set the password for openvas gsa [default=$DEFAULT_GSA_PASSWORD]"
+    echo "  --gsa-port <number>            = specify the port for openvas gsa [default=$DEFAULT_GSA_PORT]"
+    echo "  --gsa-user <name>              = specify the user for openvas gsa [default=$DEFAULT_GSA_USER]"
+    echo
+    echo "  --help                         = print this message"
+    echo
+
+    if [ "$note" != "" ]; then
+        echo "NOTE: $note"
+        echo
+    fi
+
+    exit
+
+}
+
+# Main
+
+if [ ! -f /etc/redhat-release ]; then
+    Aborting "this is not an enterprise linux machine"
+fi
+
+if [ -f /etc/centos-release ]; then
+    EL_RELEASE=$(cat /etc/centos-release | grep release\ 7)
+else
+    EL_RELEASE=$(cat /etc/redhat-release | grep release\ 7)
+    Aborting "this was only tested on (CentOS) release 7"
+fi
+
+if [ "$EL_RELEASE" == "" ]; then
+    Aborting "null EL_RELEASE; low confidence"
+fi
+
+if [ $ARGUMENTS_TOTAL -eq 0 ]; then Usage; fi
+
+for ((ARGUMENT=1; ARGUMENT <= $ARGUMENTS_TOTAL; ARGUMENT++)); do
+    case "$1" in
+    --H | -H | --h | -h | --help | -help)
+        Usage
+        ;;
+    --c | -c | --check | -check | check)
+        CHECK_FLAG=1
+        ;;
+    --i | -i | --install | -install | install)
+        INSTALL_FLAG=1
+        ;;
+    --r | -r | --restart | -restart | restart)
+        RESTART_FLAG=1
+        ;;
+    --s | -s | --start | -start | start)
+        START_FLAG=1
+        ;;
+    --stop | -stop | stop)
+        STOP_FLAG=1
+        ;;
+    --t | -t | --status | -status | status)
+        STATUS_FLAG=1
+        ;;
+    --sync | -sync | sync)
+        SYNC_FLAG=1
+        ;;
+    --i | -i | --install | -install | install)
+        INSTALL_FLAG=1
+        ;;
+    --n | -n | --cnc-server | -cnc-server)
+        CNC_SERVER_FLAG=1
+        declare -l CNC_SERVER="$2"
+        if [ "$CNC_SERVER" == "check" ] || [ "$CNC_SERVER" == "install" ] || [ "$CNC_SERVER" == "restart" ] || [ "$CNC_SERVER" == "start" ] || [ "$CNC_SERVER" == "status" ] || [ "$CNC_SERVER" == "stop" ]; then
+            CNC_SERVER=""
+        fi
+        if [ "$CNC_SERVER" != "" ] && [ ${CNC_SERVER:0:1} == "-" ]; then
+            CNC_SERVER=""
+        fi
+        if [ "$CNC_SERVER" == "" ]; then
+            Usage "$1 argument requires a given value"
+        else
+            CNC_SERVER=$2
+            shift
+        fi
+        ;;
+    --g | -g | --gsa-password | -gsa-password)
+        GSA_PASSWORD_FLAG=1
+        GSA_PASSWORD="$2"
+        if [ "$GSA_PASSWORD" == "check" ] || [ "$GSA_PASSWORD" == "install" ] || [ "$GSA_PASSWORD" == "restart" ] || [ "$GSA_PASSWORD" == "start" ] || [ "$GSA_PASSWORD" == "status" ] || [ "$GSA_PASSWORD" == "stop" ]; then
+            GSA_PASSWORD=""
+        fi
+        if [ "$GSA_PASSWORD" != "" ] && [ ${GSA_PASSWORD:0:1} == "-" ]; then
+            GSA_PASSWORD=""
+        fi
+        if [ "$GSA_PASSWORD" == "" ]; then
+            Usage "$1 argument requires a given value"
+        else
+            GSA_PASSWORD=$2
+            shift
+        fi
+        ;;
+    --p | -p | --gsa-port | -gsa-port)
+        GSA_PORT_FLAG=1
+        declare -i GSA_PORT="$2"
+        if [ "$GSA_PORT" == "0" ]; then
+            GSA_PORT=""
+        fi
+        if [ "$GSA_PORT" != "" ] && [ ${GSA_PORT:0:1} == "-" ]; then
+            GSA_PORT=""
+        fi
+        if [ "$GSA_PORT" == "" ] || [ "$GSA_PORT" == "0" ]; then
+            Usage "$1 argument requires a given integer value"
+        else
+            GSA_PORT=$2
+            shift
+        fi
+        ;;
+    --u | -u | --gsa-user | -gsa-user)
+        GSA_USER_FLAG=1
+        declare -l GSA_USER="$2"
+        if [ "$GSA_USER" == "check" ] || [ "$GSA_USER" == "install" ] || [ "$GSA_USER" == "restart" ] || [ "$GSA_USER" == "start" ] || [ "$GSA_USER" == "status" ] || [ "$GSA_USER" == "stop" ]; then
+            GSA_USER=""
+        fi
+        if [ "$GSA_USER" != "" ] && [ ${GSA_USER:0:1} == "-" ]; then
+            GSA_USER=""
+        fi
+        if [ "$GSA_USER" == "" ]; then
+            Usage "$1 argument requires a given value"
+        else
+            GSA_USER=$2
+            shift
+        fi
+        ;;
+    *)
+        # unknown flags
+        if [ "$1" != "" ]; then
+            Aborting "unknown flag '$1'"
+        fi
+        ;;
+    esac
+    shift
+done
+
+if [ "$CNC_SERVER" == "" ]; then
+    CNC_SERVER="$DEFAULT_CNC_SERVER"
+fi
+
+if [ "$GSA_HOST" == "" ]; then
+    GSA_HOST=$(hostname -A | awk '{print $1}')
+fi
+
+if [ "$GSA_PASSWORD" == "" ]; then
+    GSA_PASSWORD="$DEFAULT_GSA_PASSWORD"
+fi
+
+if [ "$GSA_PORT" == "" ] || [ "$GSA_PORT" == "0" ]; then
+    declare -i GSA_PORT="$DEFAULT_GSA_PORT"
+fi
+
+if [ "$GSA_URL" == "" ]; then
+    GSA_URL="https://$GSA_HOST:$GSA_PORT/"
+fi
+
+if [ "$GSA_USER" == "" ]; then
+    GSA_USER=$DEFAULT_GSA_USER
+fi
+
+if [ $SYNC_FLAG -eq 1 ]; then
+    OpenVAS_Sync
+fi
+
+if [ $INSTALL_FLAG -eq 1 ] || [ $CHECK_FLAG -eq 1 ]; then
+    OpenVAS_Install_Check
+fi
+
+if [ $RESTART_FLAG -eq 1 ]; then
+    START_FLAG=1
+    STOP_FLAG=1
+fi
+
+if [ $STOP_FLAG -eq 1 ]; then
+    OpenVAS_Stop
+fi
+
+if [ $START_FLAG -eq 1 ]; then
+    OpenVAS_Start
+fi
+
+if [ $STATUS_FLAG -eq 1 ]; then
+    OpenVAS_Status
+fi
+
+if [ $START_FLAG -eq 1 ] || [ $STATUS_FLAG -eq 1 ] || [ $CHECK_FLAG -eq 1 ]; then
+    OpenVAS_Admin
+    echo
+    echo "GSA USER : $GSA_USER"
+    echo "GSA PASS : $GSA_PASSWORD"
+    echo "GSA URL  : $GSA_URL"
+    echo
+fi

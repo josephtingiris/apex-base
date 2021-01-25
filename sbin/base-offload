@@ -1,0 +1,91 @@
+#!/bin/bash
+#
+# base-offload  offload crc checksum from nic to CPU
+#
+# chkconfig: 2345 12 99
+# description:  Applies and reverts ethtool, ip, & sysctl settings
+#
+# jtingiris
+#
+# check for incorrect checksums;
+# tcpdump -v -s0 -n -i eth0 | grep -i bad
+#
+# ratelimit'ed packets don't show up in tcpdump
+
+PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+if [ ! -x /sbin/ip ]; then
+    echo
+    echo "aborting, /sbin/ip file not found executable"
+    echo
+    exit 255
+fi
+
+function offload() {
+    # change the interface(s) queue length & offload rx, tx, gso, & tso
+    INTERFACES=$(ip -o link list up | grep ether | awk '{print $2}' | awk -F: '{print $1}' | sort | egrep -ve '^lo$')
+    for INTERFACE in $INTERFACES; do
+        OFFLOAD_MESSAGE="offload:   $INTERFACE "
+        if [ "$ACTION" == "start" ] || [ "$ACTION" == "stop" ]; then
+            ip link set $INTERFACE txqueuelen $TXQUEUELEN
+        fi
+        if [ -x /sbin/ethtool ]; then
+            if [ "$ACTION" == "start" ] || [ "$ACTION" == "stop" ]; then
+                ethtool --offload $INTERFACE rx $OFFLOAD tx $OFFLOAD &> /dev/null
+                ethtool -K $INTERFACE gso $OFFLOAD &> /dev/null
+                ethtool -K $INTERFACE tso $OFFLOAD &> /dev/null
+            fi
+        fi
+        if [ "$ACTION" == "status" ]; then
+            printf "%-50s %s\n" "$OFFLOAD_MESSAGE" "[STATUS]"
+            echo
+            ip -s link list $INTERFACE
+            echo
+            if [ -x /sbin/ethtool ]; then
+                ethtool -k $INTERFACE | grep -v fixed
+                echo
+            fi
+        else
+            printf "%-50s %s\n" "$OFFLOAD_MESSAGE" "[OK]"
+        fi
+    done
+
+    # relax the ratelimit for the default ratemask (includes traceroute)
+    if [ -x /sbin/sysctl ]; then
+        if [ "$ACTION" == "start" ] || [ "$ACTION" == "stop" ]; then
+            sysctl -w net.ipv4.icmp_ratelimit=$RATELIMIT &>/dev/null
+        fi
+    fi
+
+}
+
+ACTION=""
+case "$1" in
+start)
+    ACTION="start"
+    ;;
+status)
+    ACTION="status"
+    ;;
+stop)
+    ACTION="stop"
+    ;;
+*)
+    echo $"Usage: $0 {start|status|stop}"
+    exit 3
+esac
+
+if [ "$ACTION" == "start" ]; then
+    # these are the offload CentOS 6/7 values
+    OFFLOAD=off
+    TXQUEUELEN=2000
+    RATELIMIT=25
+else
+    # these are the default CentOS 6/7 values
+    OFFLOAD=on
+    TXQUEUELEN=1000
+    RATELIMIT=1000
+fi
+
+
+offload

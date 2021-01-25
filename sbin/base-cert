@@ -1,0 +1,149 @@
+#!/bin/bash
+
+# jtingiris
+
+# this script will regenerate a simple self signed ssl cert
+
+# begin base.bash.include
+
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+
+INCLUDE_FILE="base.bash"
+INCLUDE_FOUND=0
+INCLUDE_PATHS="$(dirname $0) $(pwd)"
+for INCLUDE_PATH in $INCLUDE_PATHS; do
+    if [ $INCLUDE_FOUND -eq 1 ]; then break; fi
+    while [ ! -z "$INCLUDE_PATH" ]; do
+        if [ "$INCLUDE_PATH" == "." ]; then INCLUDE_PATH=$(pwd -L .); fi
+        if [ "$INCLUDE_PATH" == "/" ]; then break; fi
+        if [ -r "$INCLUDE_PATH/include/$INCLUDE_FILE" ] && [ ! -d "$INCLUDE_PATH/include/$INCLUDE_FILE" ]; then
+            INCLUDE_FOUND=1
+            source "$INCLUDE_PATH/include/$INCLUDE_FILE"
+            Debug "sourced $INCLUDE_PATH/include/$INCLUDE_FILE" 500
+            break
+        else
+            INCLUDE_PATH=`dirname "$INCLUDE_PATH"`
+        fi
+    done
+done
+if [ $INCLUDE_FOUND -ne 1 ]; then echo "$INCLUDE_FILE file not found"; exit 1; fi
+if [ "$BASE_INCLUDE" == "" ]; then echo "$INCLUDE_FILE file invalid"; exit 1; fi
+unset INCLUDE_PATH INCLUDE_FILE
+
+# end base.bash.include
+
+declare -i YES_FLAG=0
+
+function Usage() {
+    Debug_Function $@
+
+    local note="$1"
+
+    # begin function logic
+
+    echo
+    echo "usage: $0 [hostname]"
+    echo
+    echo "options:"
+    echo
+    # these are handled in base.bash; useful to know though ...
+    echo "  -D | --debug [level]           = print debug messages (less than) [level]"
+    echo "  -H | --help                    = print this message"
+    echo "  -V | --version                 = print version"
+    echo
+    # these must be handled in this script; please keep usage messages accurate
+    echo "  -y | --yes                     = answer 'yes' to all questions (automate)"
+    echo
+
+    if [ "$note" != "" ]; then
+        echo "NOTE: $note"
+        echo
+    fi
+
+    # end function logic
+
+    Debug_Function $@
+
+    Stop 1
+}
+
+# Validation Logic
+
+# Options Logic
+
+# call the base Options function (to process --debug, -debug, --help, -help, --usage, -usage, --verbose, -verbose)
+Options $@
+
+# expand upon the base Options function (careful, same named switches will be processed twice)
+
+# for each command line argument, evaluate them case by case, process them, and shift to the next
+for ((ARGUMENT=1; ARGUMENT <= $ARGUMENTS_TOTAL; ARGUMENT++)); do
+    case "$1" in
+        -y | --yes | -yes)
+            YES_FLAG=1
+            Debug_Variable YES 4 "$1 flag was set"
+        ;;
+        *)
+            # unknown flags
+            if [ "$1" != "" ] && [ $OPTION -eq 0 ]; then
+                echo "unknown flag '$1'"
+                Stop 2 # not absolutely necessary, but does enforce proper usage
+            fi
+        ;;
+    esac
+    shift
+done
+
+Start
+
+export NAME="localhost"
+export DAYS=3650 # 10 years
+
+CERT_DIR="/etc/pki/tls/certs"
+KEY_DIR="/etc/pki/tls/private"
+
+CERT_FILE="${CERT_DIR}/${NAME}.crt"
+KEY_FILE="${KEY_DIR}/${NAME}.key"
+
+Debug_Variable CERT_FILE 10
+Debug_Variable KEY_FILE 10
+
+if [ -f "${CERT_FILE}" ]; then
+    Question "Backup ${CERT_FILE}"
+    if [ "$QUESTION_FLAG" -eq 1 ]; then
+        cp "${CERT_FILE}" "${CERT_FILE}.$UNIQ"
+    else
+        Aborting "$CERT_FILE already exists"
+    fi
+fi
+
+if [ -f "${KEY_FILE}" ]; then
+    Question "Backup ${KEY_FILE}"
+    if [ "$QUESTION_FLAG" -eq 1 ]; then
+        cp "${KEY_FILE}" "${KEY_FILE}.$UNIQ"
+    else
+        Aborting "$KEY_FILE already exists"
+    fi
+fi
+
+if [ $YES_FLAG -eq 1 ]; then
+    SUBJECT=-subj\ "/C=XX/ST=/L=/O=$NAME/OU=/CN=$NAME" # only valid for $NAME"
+    #SUBJECT=-subj\ "/C=XX/ST=/L=/O=$NAME" # not valid for any name
+else
+    SUBJECT=""
+fi
+
+openssl req -new -days $DAYS -x509 -nodes -newkey rsa:2048 -out "${CERT_FILE}" -keyout "${KEY_FILE}" $SUBJECT
+
+openssl x509 -in "${CERT_FILE}" -noout -text
+
+
+Stop 0
+
+
+
+
+
+
+#####
+

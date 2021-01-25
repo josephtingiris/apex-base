@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# careful using this
+
+# jtingiris
+
+PATH=/bin:/sbin
+
+SIDELINE="$1"
+if [ "$SIDELINE" == "" ]; then
+    SIDELINE="staging"
+fi
+
+SYNC_PATHS=$(ls -1 | egrep -ve "httpd.conf.d|^${SIDELINE}$")
+
+for SYNC_PATH in $SYNC_PATHS; do
+    rsync -avp --exclude=*httpd.conf.d* $SYNC_PATH/ ${SIDELINE}/$SYNC_PATH/ --delete-after
+done
