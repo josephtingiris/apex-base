@@ -1,0 +1,196 @@
+#!/bin/bash
+
+# begin Apex.bash.include
+
+if [ "$Debug" == "" ]; then
+    Debug=0
+fi
+
+Apex_Bash="/apex/include/Apex.bash"
+if [ ! -r "$Apex_Bash" ]; then
+    echo "$Apex_Bash not readable"
+    exit 1;
+fi
+source "$Apex_Bash"
+
+# end Apex.bash.include
+
+if [ "$USER" != "root" ]; then
+    aborting "must be root"
+fi
+
+Backup_Host="$1"
+Backup_Dir=/backup/key/${USER}@${HOSTNAME}/${PWD}
+
+function _mkdir() {
+    if [ "$1" == "" ]; then
+        aborting "can't _mkdir '$1'"
+    fi
+
+    if [ ! -d "$1" ]; then
+        mkdir -p "$1"
+        if [ $? -ne 0 ]; then
+            aborting "couldn't mkdir '$1'"
+        fi
+    fi
+
+    chown root:root "$1"
+    chmod 0700 "$1"
+
+    find "$1" -type f ! -perm 0400 -ls -exec chmod 0400 {} \;
+}
+
+function backupKey() {
+    from="$1"
+    to="$2"
+
+    debug "from=$from, to=$to" 5
+
+    if [ "$from" == "" ]; then
+        aborting "can't backupKey empty source '$from'"
+    fi
+
+    if [ "$to" == "" ]; then
+        aborting "can't backupKey empty destination '$to'"
+    fi
+
+    if [ ! -r "$from" ]; then
+        warning "source '$from' file not readable"
+        return
+    fi
+
+    if [ -d "$from" ]; then
+        warning "source '$from' is a directory"
+        return
+    fi
+
+    from_md5sum=$(md5sum "$from" | awk '{print $1}')
+
+    if [ ! -f "$to" ]; then
+        cp "$from" "$to"
+        if [ $? -ne 0 ]; then
+            aborting "failed to cp '$from' '$to'"
+        fi
+        echo "$Key_Counter [OK] copied '$from' '$to'"
+    else
+        diff "$from" "$to"
+        if [ $? -ne 0 ]; then
+            aborting "'$from' and '$to' are different"
+        fi
+        echo "$Key_Counter [OK] exists '$from' '$to'"
+    fi
+
+    to_md5sum=$(md5sum "$to" | awk '{print $1}')
+
+    if [ "$from_md5sum" != "$to_md5sum" ]; then
+        aborting "from md5sum $from_md5sum != to md5sum $to_md5sum"
+    fi
+
+    find "$to" ! -user root -o ! -group root -ls -exec chown root:root {} \;
+    if [ $? -ne 0 ]; then
+        warning "failed to chown root:root '$to'"
+    fi
+
+    find "$to" ! -perm 0400 -ls -exec chmod 0400 {} \;
+    if [ $? -ne 0 ]; then
+        warning "failed to chmod 0400 '$to'"
+    fi
+
+}
+
+# Main
+
+Debug=0
+Debug_Level=2
+
+Key_Counter=0
+
+echo "Backup_Dir = $Backup_Dir"
+echo
+
+if [ "$Here" == "$Backup_Dir" ]; then
+    ls -lrt
+else
+
+    _mkdir "$Backup_Dir"
+
+    while read Private_Key_Readlink; do
+
+        Private_Key=$(readlink -f "$Private_Key_Readlink")
+        debugValue Private_Key $Debug_Level
+
+        if [ "$Private_Key" == "" ]; then
+            continue
+        fi
+
+        Private_Key_Md5sum=""
+        Private_Key_Md5sum=$(md5sum "$Private_Key" | awk '{print $1}')
+        debugValue Private_Key_Md5sum $Debug_Level
+
+        if [ "$Private_Key_Md5sum" == "" ]; then
+            warning "$Private_Key md5sum is empty"
+            continue
+        fi
+
+        let Key_Counter=$Key_Counter+1
+
+        Private_Key_Basename=""
+        Private_Key_Basename=$(basename "$Private_Key")
+        debugValue Private_Key_Basename $Debug_Level
+
+        Private_Key_File_Md5sum=""
+        Private_Key_File_Md5sum="$(echo "$Private_Key_Basename" | awk -F\. '{print $1}')"
+        debugValue Private_Key_File_Md5sum $Debug_Level
+
+
+        Public_Key="${Private_Key}.pub"
+        Public_Key_Basename=""
+        Public_Key_Md5sum=""
+        Public_key_File_Md5sum=""
+
+        if [ ! -f "${Public_Key}" ]; then
+            Public_Key=$(ls -1 "$(dirname "$Private_Key")/${Private_Key_Md5sum}"* 2> /dev/null | grep \.pub$ | head -1)
+        fi
+
+        debugValue Public_Key $Debug_Level
+
+        if [ -f "${Public_Key}" ]; then
+            Public_Key_Md5sum=$(md5sum "$Public_Key" | awk '{print $1}')
+            Public_Key_Basename="$(basename "$Public_Key")"
+            Public_Key_File_Md5sum="$(echo "$Public_Key_Basename" | awk -F\. '{print $2}')"
+        else
+            warning "${Private_Key} has no public key file"
+        fi
+
+        debugValue Public_Key_Basename $Debug_Level
+        debugValue Public_Key_Md5sum $Debug_Level
+        debugValue Public_Key_File_Md5sum $Debug_Level
+
+        if [ "$Private_Key_Md5sum" == "$Private_Key_File_Md5sum" ]; then
+            Private_Key_Backup="${Backup_Dir}/${Private_Key_Basename}"
+        else
+            Private_Key_Backup="${Backup_Dir}/${Private_Key_Md5sum}.$(basename "$Private_Key")"
+        fi
+
+        debugValue Private_Key_Backup $Debug_Level
+
+        if [ "$Public_Key_Md5sum" == "$Public_Key_File_Md5sum" ]; then
+            Public_Key_Backup="${Backup_Dir}/${Public_Key_Basename}"
+        else
+            Public_Key_Backup="${Backup_Dir}/${Private_Key_Md5sum}.${Public_Key_Md5sum}.$(basename "$Public_Key")"
+        fi
+
+        debugValue Public_Key_Backup $Debug_Level
+
+        backupKey "${Private_Key}" "${Private_Key_Backup}"
+
+        backupKey "${Public_Key}" "${Public_Key_Backup}"
+
+        echo
+
+    done <<< "$(find . -name "*id_dsa" -o -name "*id_rsa" -o -name "*ecdsa_key" -o -name "*id_ed25519" -o -name "*ssh_host_dsa_key" -o -name "*ssh_host_rsa_key" -o -name "*ssh_host_ecdsa_key" -o -name "*ssh_host_ed25519_key")"
+fi
+
+if [ "$1" != "" ]; then
+    rsync  -avp "${Backup_Dir}/" "$1:${Backup_Dir}/"
+fi
