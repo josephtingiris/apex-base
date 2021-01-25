@@ -20,7 +20,7 @@ source "${BASE_BASH}"
 COPY_ID_MAX=15
 
 DEFAULT_BROWSER_URL=""
-DEFAULT_EMAILS="joseph.tingiris@mastechinfotrellis.com" # space or comma separated list
+DEFAULT_EMAILS="root" # space or comma separated list
 DEFAULT_SLACK_CHANNELS=""
 DEFAULT_SLACK_URL=""
 
