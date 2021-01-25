@@ -1,0 +1,56 @@
+#!/bin/bash
+
+Infinity_Dirs=(etc include)
+Top_Dirs=(apex base)
+Up_Dirs=(etc bin sbin home machine opt var)
+
+for Top_Dir in ${Top_Dirs[@]}; do
+    if [ ! -d "/${Top_Dir}" ] || [ ! -r "/${Top_Dir}" ]; then continue; fi
+    if [ ! -d "/${Top_Dir}/.svn" ] || [ ! -r "/${Top_Dir}/.svn" ]; then continue; fi
+
+    for Infinity_Dir in ${Infinity_Dirs[@]}; do
+        if [ -d "/${Top_Dir}/${Infinity_Dir}" ]; then
+            if svn info "/${Top_Dir}/${Infinity_Dir}" | grep ^Depth &> /dev/nll; then
+                echo "Updating '/${Top_Dir}/${Infinity_Dir}' depth ..."
+                svn up "/${Top_Dir}/${Infinity_Dir}" --set-depth=infinity &> /dev/null
+                Svn_Rc=$?
+                if [ ${Svn_Rc} -ne 0 ]; then
+                    echo
+                    echo "!! 'svn up \"/${Top_Dir}/${Infinity_Dir}\" --set-depth=infinity' failed (rc=${Svn_Rc})"
+                    echo
+                fi
+
+                svn perms "/${Top_Dir}/${Infinity_Dir}" &> /dev/null
+                Svn_Rc=$?
+                if [ ${Svn_Rc} -ne 0 ]; then
+                    echo
+                    echo "!! 'svn perms \"/${Top_Dir}/${Infinity_Dir}\"' failed (rc=${Svn_Rc})"
+                    echo
+                fi
+            fi
+        fi
+    done
+
+    for Up_Dir in ${Up_Dirs[@]}; do
+        if [ -d "/${Top_Dir}/${Up_Dir}" ]; then
+            echo "Updating '/${Top_Dir}/${Up_Dir}' ..."
+            svn up "/${Top_Dir}/${Up_Dir}" | grep -v ^Updating\ 
+            Svn_Rc=$?
+            if [ ${Svn_Rc} -eq 0 ]; then
+                echo
+            else
+                echo
+                echo "!! 'svn up \"/${Top_Dir}/${Up_Dir}\"' failed (rc=${Svn_Rc})"
+                echo
+            fi
+
+            svn perms "/${Top_Dir}/${Up_Dir}" &> /dev/null
+            Svn_Rc=$?
+            if [ ${Svn_Rc} -ne 0 ]; then
+                echo
+                echo "!! 'svn perms \"/${Top_Dir}/${Up_Dir}\"' failed (rc=${Svn_Rc})"
+                echo
+            fi
+        fi
+    done
+done
