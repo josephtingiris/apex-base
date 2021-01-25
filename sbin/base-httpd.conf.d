@@ -1,4 +1,4 @@
-#e!/bin/bash
+#!/bin/bash
 
 # This script will ... check & conform directories to base httpd.conf.d sematics
 

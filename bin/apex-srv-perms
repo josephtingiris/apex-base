@@ -1,0 +1,17 @@
+#!/bin/bash
+
+WHEELDIRS="/apex/srv"
+
+for WHEELDIR in $WHEELDIRS; do
+    if [ ! -d "$WHEELDIR" ]; then continue; fi
+
+    echo "+ $WHEELDIR"
+
+    cd "$WHEELDIR"
+
+    find . ! -user root -o ! -group apex -print0 | xargs -0 chown -R root:apex
+
+    find . -type d ! -perm u+rwx,g+rwxs,o-rwxs -ls -exec chmod u+rwx,g+rwxs,o-rwxs {} \;
+    find . -type f ! -perm u+rw,u-x,g+rw,g-xs,o-rwxs -ls -exec chmod u+rw,u-x,g+rw,g-xs,o-rwxs {} \;
+
+done

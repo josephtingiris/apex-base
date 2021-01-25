@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# begin Apex.bash.include
+
+if [ "$Debug" == "" ]; then
+    Debug=0
+fi
+
+Apex_Bash="/apex/include/Apex.bash"
+if [ ! -r "$Apex_Bash" ]; then
+    echo "$Apex_Bash not readable"
+    exit 1;
+fi
+source "$Apex_Bash"
+
+# end Apex.bash.include
+
+Apex_Backup_To_Dir="root@t1:/mnt/dm-crypt-sdb/backup/v1"
+Apex_From_Dirs="/boot /etc /home /misc /mux /opt /root /src /usr /var"
+
+Apex_Excludes="
+local/*
+tmp/*
+"
+
+Apex_Rsync_Args="-rlptgoDH --partial --append-verify"
+Apex_Rsync_Args+=" -v --progress"
+
+for Apex_Exclude in $Apex_Excludes; do
+    Apex_Rsync_Args+=" --exclude=$Apex_Exclude"
+done
+
+Apex_Stage="backup"
+for Apex_From_Dir in $Apex_From_Dirs; do
+    Apex_Delete=" --delete-before --delete-excluded"
+    Apex_To_Dir=$Apex_Backup_To_Dir/$Apex_From_Dir
+    echo
+    echo "[$Apex_Stage] rsync $Apex_Rsync_Args "${Apex_From_Dir}" "${Apex_To_Dir}" ${Apex_Delete}"
+    echo
+    rsync $Apex_Rsync_Args "${Apex_From_Dir}/" "${Apex_To_Dir}/" ${Apex_Delete}
+    RC=$?
+    if [ $RC -ne 0 ]; then
+        exit $RC
+    fi
+done

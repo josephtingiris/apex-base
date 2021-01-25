@@ -1,0 +1,153 @@
+#!/bin/bash
+
+function usage() {
+    printf "\nusage: $0 <domain> [renew|issue] [challenge-alias domain\n\n"
+    exit 1
+}
+
+if [ "$1" == "" ]; then
+    usage
+fi
+
+export LE_WORKING_DIR=/root/.acme.sh
+if [ ! -d "$LE_WORKING_DIR" ]; then
+    echo "aborting, $LE_WORKING_DIR directory not found"
+    exit 1
+fi
+
+ACME_SH=${LE_WORKING_DIR}/acme.sh
+if [ ! -x "$ACME_SH" ]; then
+    echo "aborting, $ACME_SH file not executable"
+    exit 1
+fi
+
+DOMAIN_DIR="$1"
+if [ "$DOMAIN_DIR" == "" ] || [ ! -d "$DOMAIN_DIR" ]; then
+    DOMAIN_DIR=$(realpath $(pwd))
+    WEBROOT="${DOMAIN_DIR}/@/html"
+    if [ ! -d "$WEBROOT" ]; then
+        DOMAIN_DIR=""
+    fi
+    if [ "$DOMAIN_DIR" == "" ] || [ ! -d "$DOMAIN_DIR" ]; then
+        if [ -d /apex/account ] ; then
+            DOMAIN_DIR=$(realpath $(find /apex/account -type d -name "$1") 2> /dev/null | head -1)
+        fi
+    fi
+    if [ "$DOMAIN_DIR" == "" ] || [ ! -d "$DOMAIN_DIR" ]; then
+        if [ -d /base/account ] ; then
+            DOMAIN_DIR=$(realpath $(find /base/account -type d -name "$1") 2> /dev/null | head -1)
+        fi
+    fi
+    if [ "$DOMAIN_DIR" == "" ] || [ ! -d "$DOMAIN_DIR" ]; then
+        if [ -d /apex/srv ] ; then
+            DOMAIN_DIR=$(realpath $(find /apex/srv -type d -name "$1") 2> /dev/null | head -1)
+        fi
+    fi
+else
+    DOMAIN_DIR=$(realpath "$1")
+fi
+
+if [ "$DOMAIN_DIR" == "" ] || [ ! -d "$DOMAIN_DIR" ]; then
+    echo "aborting, DOMAIN_DIR directory not found"
+    exit 1
+fi
+
+WEBROOT="${DOMAIN_DIR}/@/html"
+if [ ! -d "$WEBROOT" ]; then
+    echo "aborting, $WEBROOT directory not found"
+    exit 1
+fi
+
+CERTIFICATE_DIR="${DOMAIN_DIR}/certificate"
+DOMAIN=$(basename "$DOMAIN_DIR")
+
+if [ "$DOMAIN" != "" ]; then
+    if [ "$3" != "" ]; then
+        CHALLENGE_ALIAS="$3"
+    else
+        if [ "$2" != "issue" ]; then
+            if [ "$2" != "" ] && [ "$2" != "$DOMAIN" ]; then
+                CHALLENGE_ALIAS="$2"
+            fi
+        fi
+    fi
+fi
+
+ACME_ARGS=""
+
+echo "DOMAIN            = $DOMAIN"
+if [ "${CHALLENGE_ALIAS}" != "" ]; then
+    echo "CHALLENGE_ALIAS   = $CHALLENGE_ALIAS"
+    ACME_ARGS+=" --challenge-alias $CHALLENGE_ALIAS"
+fi
+echo "DOMAIN_DIR        = $DOMAIN_DIR"
+echo "CERTIFICATE_DIR   = $CERTIFICATE_DIR"
+echo "WEBROOT           = $WEBROOT"
+
+if [ -f "${CERTIFICATE_DIR}/*.${DOMAIN}.crt" ] && [ "$2" != "issue" ]; then
+    ACME_ARGS+=" --renew"
+    ACME_ARGS+=" --ecc"
+else
+    ACME_ARGS+=" --issue"
+fi
+ACME_ARGS+=" --domain $DOMAIN"
+
+#
+# !! NOTE !!
+#
+# --challenge-alias will FAIL on an existing domain that was created without it
+#
+#
+# MAKE SURE, i.e.
+#
+# ~/.acme.sh/00000000.in_ecc/00000000.in.conf
+#
+# contains
+#
+# Le_ChallengeAlias='4b1d.in,'
+#
+#
+
+# https://github.com/Neilpang/acme.sh/blob/dev/dnsapi/README.md
+#export NSUPDATE_KEY="/etc/rndc.key"
+export NSUPDATE_KEY="/opt/dns/etc/named.shared.public.zone.key"
+if [ -r "$NSUPDATE_KEY" ]; then
+    if [ "${CHALLENGE_ALIAS}" != "" ]; then
+        export NSUPDATE_SERVER="ns1.${CHALLENGE_ALIAS}"
+    else
+        export NSUPDATE_SERVER="ns1.${DOMAIN}"
+    fi
+    echo "NSUPDATE_SERVER   = $NSUPDATE_SERVER"
+    echo "NSUPDATE_KEY      = $NSUPDATE_KEY"
+    ACME_ARGS+=" --domain *.$DOMAIN"
+    ACME_ARGS+=" --dns dns_nsupdate"
+else
+    ACME_ARGS+=" --webroot $WEBROOT"
+fi
+ACME_ARGS+=" --cert-file ${CERTIFICATE_DIR}/*.${DOMAIN}.crt"
+ACME_ARGS+=" --key-file ${CERTIFICATE_DIR}/*.${DOMAIN}.key"
+ACME_ARGS+=" --ca-file ${CERTIFICATE_DIR}/*.${DOMAIN}.ca"
+ACME_ARGS+=" --fullchain-file ${CERTIFICATE_DIR}/*.${DOMAIN}.chain"
+ACME_ARGS+=" --keylength ec-384"
+ACME_ARGS+=" --force"
+if [ "$Debug" != "" ]; then
+    # NOTICE
+    # turning on debug will reissue agains staging; to revert use 'issue' again (with debug turned off)
+    ACME_ARGS+=" --staging"
+    ACME_ARGS+=" --debug"
+    ACME_ARGS+=" --log"
+fi
+
+echo $ACME_SH $ACME_ARGS
+
+if [ ! -d "$CERTIFICATE_DIR" ]; then
+    mkdir -p "$CERTIFICATE_DIR"
+fi
+
+$ACME_SH $ACME_ARGS
+ACME_RC=$?
+
+if [ $ACME_RC -eq 0 ]; then
+    cd "${CERTIFICATE_DIR}"
+    svn commit -m "certificates updated via $0"
+fi

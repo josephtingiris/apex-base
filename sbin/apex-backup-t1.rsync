@@ -1,0 +1,311 @@
+#!/bin/bash
+
+# begin Apex.bash.include
+
+if [ "${Debug}" == "" ]; then
+    Debug=0
+fi
+
+Apex_Bash="/apex/include/Apex.bash"
+if [ ! -f "${ApexBash}" ] && [ ! -r "${Apex_Bash}" ]; then
+    echo "${Apex_Bash} file not readable"
+    exit 1;
+fi
+source "${Apex_Bash}"
+
+# end Apex.bash.include
+
+Retry_Max=10
+
+Suffix="$(date +%Y%m%d-%H%M%S).rsync.backup"
+
+# these dirs get rsync'ed with --keep-dirlinks --copy-dirlinks
+Machine_Backup_Dirs="/apex /backup /home/a1 /home/b1 /home/c1 /home/ui /home/jjt /home/jtingiris"
+# these dirs get rsync'ed with --force --delete-before
+Machine_Clone_Dirs="/boot /etc /misc /opt /root /usr /var"
+
+Apex_Uuid="2ad68e99-965c-4232-aaa3-dc32809b2023" # from
+Apex_Backup_Uuids="d600601e-e6a0-4d9c-9519-b64f6f494435 4f86426c-e65d-4041-997a-18a77c633132"
+Apex_Clone_Uuids="d6ef9974-0ef1-4475-bde9-6db1e2d87052" # Apex
+
+Backup=0
+Clone=0
+Mirror=0
+Test=0
+
+case $1 in
+    '-b' | '--b' | '-backup' | '--backup' | 'backup')
+        Backup=1
+        shift
+        ;;
+    '-c' | '--c' | '-clone' | '--clone' | 'clone')
+        Clone=1
+        shift
+        ;;
+    '-m' | '--m' | '-mirror' | '--mirror' | 'mirror')
+        Mirror=1
+        shift
+        ;;
+    '-t' | '--t' | '-test' | '--test' | 'test')
+        Test=1
+        shift
+        ;;
+    *)
+        Backup=1
+        Clone=1
+        Mirror=1
+        ;;
+esac
+
+apexStart
+
+if [ "${Apex_Logname}" != "root" ]; then
+    echo "must be root"
+    exit
+fi
+
+dependency "apex-dm-crypt lsblk rsync"
+
+key_file=/apex/local/etc/dm-crypt/G
+if [ ! -r "${key_file}" ]; then
+    key_file=""
+fi
+
+if [ ${Test} -eq 0 ]; then
+    apex-dm-crypt -m -k "${key_file}" -e crypttab
+fi
+
+Apex_Uuid_Found=0
+Machine_Uuids=$(lsblk -ailnp --output Uuid | sort -u)
+for Machine_Uuid in ${Machine_Uuids}; do
+    if [ "${Machine_Uuid}" == "${Apex_Uuid}" ]; then
+        Apex_From_Dir=$(lsblk -ailnp --output UUID,MOUNTPOINT | grep ^"${Apex_Uuid}" | awk '{print $NF}')
+        if [ "${Apex_From_Dir}" != "" ]; then
+            Apex_From_Dir+="/"
+            Apex_Uuid_Found=1
+        fi
+    fi
+done
+
+if [ ${Apex_Uuid_Found} -ne 1 ]; then
+    aborting "Apex Uuid '${Apex_Uuid}' not found"
+else
+    echo
+    echo "Apex Uuid      = ${Apex_Uuid} (${Apex_From_Dir})"
+fi
+
+Apex_Rsync_Args="-rlptgoDHz --partial --append-verify"
+Apex_Rsync_Args+=" -v --progress"
+
+# hmm
+Apex_Rsync_Exclude=""
+Apex_Rsync_Exclude+=" --exclude=*.swp"
+Apex_Rsync_Exclude+=" --exclude=/var/lib/docker/devicemapper/devicemapper/data/*"
+
+Apex_Rsync_Args+=${Apex_Rsync_Exclude}
+
+if [ ${Test} -eq 1 ] || [ ${Clone} -eq 1 ]; then
+    Apex_Stage="clone"
+    echo
+    echo "#"
+    echo "#"
+    echo "# ${Apex_Stage}"
+    echo "#"
+    echo "#"
+    echo
+
+    Apex_Rsync_Phase_Args="--force --delete-before"
+
+    for Machine_Uuid in ${Machine_Uuids}; do
+        debugValue Machine_Uuid 4 ${Apex_Stage}
+        Apex_To_Dir=""
+        for Apex_Clone_Uuid in ${Apex_Clone_Uuids}; do
+            if [ "${Apex_Clone_Uuid}" == "${Machine_Uuid}" ]; then
+                Apex_To_Dir=$(lsblk -ailnp --output UUID,MOUNTPOINT | grep ^"${Apex_Clone_Uuid}" | awk '{print $NF}')
+
+                if [ "${Apex_To_Dir}" == "" ]; then
+                    aborting "Apex_To_Dir is null (${Apex_Stage})"
+                else
+                    debugValue Apex_To_Dir 3 ${Apex_Stage}
+                    Apex_To_Dir+="/"
+                    if [ ! -w "${Apex_To_Dir}" ]; then
+                        aborting "Apex_To_Dir is not writable (${Apex_Stage})"
+                    else
+                        Retry=0
+                        while [ ${Retry_Max} -gt ${Retry} ]; do
+                            let Retry=${Retry}+1
+                            echo
+                            echo "[${Retry}][${Apex_Stage}] rsync ${Apex_Rsync_Args} ${Apex_Rsync_Phase_Args} \"${Apex_From_Dir}/\" \"${Apex_To_Dir}/\""
+                            echo
+                            RC=0
+                            if [ ${Test} -eq 0 ]; then
+                                sync
+                                rsync ${Apex_Rsync_Args} ${Apex_Rsync_Phase_Args} "${Apex_From_Dir}/" "${Apex_To_Dir}/"
+                                RC=$?
+                            fi
+                            if [ ${RC} -ne 0 ]; then
+                                if [ ${Retry} -ge ${Retry_Max} ] || [ ${RC} -eq 20 ]; then
+                                    aborting "rsync failed ${RC} [Retry=${Retry}]" ${RC}
+                                fi
+                            else
+                                break
+                            fi
+                        done
+                    fi
+                fi
+            fi
+        done
+    done
+fi
+
+if [ ${Test} -eq 1 ] || [ ${Backup} -eq 1 ]; then
+    Apex_Stage="backup"
+    echo
+    echo "#"
+    echo "#"
+    echo "# ${Apex_Stage}"
+    echo "#"
+    echo "#"
+    echo
+
+    for Machine_Uuid in ${Machine_Uuids}; do
+        debugValue Machine_Uuid 4 ${Apex_Stage}
+        Apex_To_Dir=""
+        for Apex_Backup_Uuid in ${Apex_Backup_Uuids}; do
+            if [ "${Apex_Backup_Uuid}" == "${Machine_Uuid}" ]; then
+                Apex_To_Dir=$(lsblk -ailnp --output UUID,MOUNTPOINT | grep ^"${Apex_Backup_Uuid}" | awk '{print $NF}')
+
+                if [ "${Apex_To_Dir}" == "" ]; then
+                    aborting "Apex_To_Dir is null (${Apex_Stage})"
+                else
+                    Apex_To_Dir+="/backup/${HOSTNAME}" # Apex_Backup_Prefix
+
+                    Apex_Rsync_Phase_Args="--copy-dirlinks --keep-dirlinks --backup --suffix=.${Suffix}"
+                    Apex_Rsync_Phase_Args="--backup --suffix=.${Suffix}"
+
+                    for Machine_Backup_Dir in ${Machine_Backup_Dirs}; do
+                        debugValue Apex_From_Dir 5 ${Machine_Backup_Dir}
+                        if [ -d "${Machine_Backup_Dir}" ] && [ -r "${Machine_Backup_Dir}" ]; then
+                            mkdir -p "${Apex_To_Dir}${Machine_Backup_Dir}/" &> /dev/null
+                            if [ $? -ne 0 ]; then
+                                aborting "mkdir -p '${Apex_To_Dir}${Machine_Backup_Dir}/' &> /dev/null failed"
+                            fi
+                            if [ -w "${Apex_To_Dir}${Machine_Backup_Dir}" ]; then
+                                Retry=0
+                                while [ ${Retry_Max} -gt ${Retry} ]; do
+                                    let Retry=${Retry}+1
+                                    echo
+                                    echo "[${Retry}][${Apex_Stage}] rsync ${Apex_Rsync_Args} ${Apex_Rsync_Phase_Args} "${Machine_Backup_Dir}/" "${Apex_To_Dir}${Machine_Backup_Dir}/""
+                                    echo
+                                    RC=0
+                                    if [ ${Test} -eq 0 ]; then
+                                        sync
+                                        rsync ${Apex_Rsync_Args} ${Apex_Rsync_Phase_Args} "${Machine_Backup_Dir}/" "${Apex_To_Dir}${Machine_Backup_Dir}/"
+                                        RC=$?
+                                    fi
+                                    if [ ${RC} -ne 0 ]; then
+                                        if [ ${Retry} -ge ${Retry_Max} ] || [ ${RC} -eq 20 ]; then
+                                            aborting "rsync failed ${RC}" ${RC}
+                                        fi
+                                    else
+                                        break
+                                    fi
+                                done
+                            fi
+                        fi
+                    done
+
+                    Apex_Rsync_Phase_Args="--force --delete-before"
+
+                    for Machine_Clone_Dir in ${Machine_Clone_Dirs}; do
+                        if [ -d "${Machine_Clone_Dir}" ] && [ -r "${Machine_Clone_Dir}" ]; then
+                            debugValue Apex_From_Dir 5 ${Machine_Clone_Dir}
+                            mkdir -p "${Apex_To_Dir}${Machine_Clone_Dir}/" &> /dev/null
+                            if [ $? -ne 0 ]; then
+                                aborting "mkdir -p '${Apex_To_Dir}${Machine_Clone_Dir}/' &> /dev/null failed"
+                            fi
+                            if [ -w "${Apex_To_Dir}${Machine_Clone_Dir}" ]; then
+                                Retry=0
+                                while [ ${Retry_Max} -gt ${Retry} ]; do
+                                    let Retry=${Retry}+1
+                                    echo
+                                    echo "[${Retry}][${Apex_Stage}-clone] rsync ${Apex_Rsync_Args} ${Apex_Rsync_Phase_Args} "${Machine_Clone_Dir}/" "${Apex_To_Dir}${Machine_Clone_Dir}/""
+                                    echo
+                                    RC=0
+                                    if [ ${Test} -eq 0 ]; then
+                                        sync
+                                        rsync ${Apex_Rsync_Args} ${Apex_Rsync_Phase_Args} "${Machine_Clone_Dir}/" "${Apex_To_Dir}${Machine_Clone_Dir}/"
+                                        RC=$?
+                                    fi
+                                    if [ ${RC} -ne 0 ]; then
+                                        if [ ${Retry} -ge ${Retry_Max} ] || [ ${RC} -eq 20 ]; then
+                                            aborting "rsync failed ${RC}" ${RC}
+                                        fi
+                                    else
+                                        break
+                                    fi
+                                done
+                            fi
+                        fi
+                    done
+                fi
+                unset Apex_To_Dir
+            fi
+        done
+    done
+fi
+
+if [ ${Test} -eq 1 ] || [ ${Mirror} -eq 1 ]; then
+    Apex_Stage="mirror"
+    echo
+    echo "#"
+    echo "#"
+    echo "# ${Apex_Stage}"
+    echo "#"
+    echo "#"
+    echo
+
+    Apex_Rsync_Phase_Args="--copy-dirlinks --keep-dirlinks --backup --suffix=.${Suffix}"
+
+    # mirror the backup uuids
+    for Machine_Uuid in ${Machine_Uuids}; do
+        debugValue Machine_Uuid 3 ${Apex_Stage}
+
+        for Apex_Backup_Uuid in ${Apex_Backup_Uuids}; do
+            if [ "${Apex_Backup_Uuid}" == "${Machine_Uuid}" ]; then
+                Mirror_From_Dir=$(lsblk -ailnp --output UUID,MOUNTPOINT | grep ^"${Apex_Backup_Uuid}" | awk '{print $NF}')
+                for Apex_Mirror_Uuid in ${Apex_Backup_Uuids}; do
+                    if [ "${Apex_Mirror_Uuid}" != "${Apex_Backup_Uuid}" ]; then
+                        Mirror_To_Dir=$(lsblk -ailnp --output UUID,MOUNTPOINT | grep ^"${Apex_Mirror_Uuid}" | awk '{print $NF}')
+                        if [ -r "${Mirror_From_Dir}" ] && [ -w "${Mirror_To_Dir}" ]; then
+                            Mirror_From_Dir+="/"
+                            Mirror_To_Dir+="/"
+                            debugValue Apex_Backup_Uuid 1 ${Apex_Mirror_Uuid}
+                            Retry=0
+                            while [ ${Retry_Max} -gt ${Retry} ]; do
+                                let Retry=${Retry}+1
+                                echo
+                                echo "[${Retry}][${Apex_Stage}] rsync ${Apex_Rsync_Args} ${Apex_Rsync_Phase_Args} "${Mirror_From_Dir}" "${Mirror_To_Dir}""
+                                echo
+                                RC=0
+                                if [ ${Test} -eq 0 ]; then
+                                    rsync ${Apex_Rsync_Args} ${Apex_Rsync_Phase_Args} "${Mirror_From_Dir}" "${Mirror_To_Dir}"
+                                    RC=$?
+                                fi
+                                if [ ${RC} -ne 0 ]; then
+                                    if [ ${Retry} -ge ${Retry_Max} ] || [ ${RC} -eq 20 ]; then
+                                        aborting "rsync failed ${RC}" ${RC}
+                                    fi
+                                else
+                                    break
+                                fi
+                            done
+                        fi
+                    fi
+                done
+            fi
+            unset Mirror_From_Dir Mirror_To_Dir
+        done
+    done
+fi
+

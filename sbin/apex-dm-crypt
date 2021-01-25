@@ -1,0 +1,1890 @@
+#!/bin/bash
+
+# 20170704, jtingiris@gmail.com, function & variable renaming
+# 20170222, jtingiris@gmail.com
+
+# This script simplifies and automates the repetitive use of cryptsetup to mount and/or unmount encrypted filesystems.
+#
+# Additionally;
+#
+# It can (optionally) setup (a HIPAA/PCI compliant) dm-crypt on empty disks and/or partitions
+# It can make or repair an xfs filesystem on a dm-crypt device
+# It can use key files or passphrases, etc.
+#
+# Note;
+#
+# By default, the first cipher this script tries is a stronger cipher & password hash than the cryptsetup defaults.
+# It can (and does) still support the cryptsetup default for plain and luks.
+# It's also possible to have mixed ciphers & hashes on different devices.
+# --exclude can be crypttab, a device (i.e. /dev/sda), a block (i.e. sda), a uuid, a partuuid, or a device mapper name
+
+# TODO
+#
+# ability to use an URL to fetch a key file
+# think about Crypt_Name(s) when/if devices swap block names; i.e. what if sda becomes sdb? use UUID? try all keys?
+# retest cryptSetup
+# function to identify & purge ghost crypts
+
+# begin Apex.bash.include
+
+if [ "$Debug" == "" ]; then
+    Debug=0
+fi
+
+Apex_Bash="/apex/include/Apex.bash"
+if [ ! -r "$Apex_Bash" ]; then
+    echo "$Apex_Bash not readable"
+    exit 1;
+fi
+source "$Apex_Bash"
+
+# end Apex.bash.include
+
+# Global_Variables
+
+declare -x Default_Key_Dir="/etc"
+declare -x Default_Key_Bytes="2048"
+# cryptsetup uses --cipher cipher-mode-iv
+declare -x Default_Ciphers="twofish-cbc-essiv:sha256 aes-cbc-essiv:sha256 aes-xts-plain64 default" # default cryptsetup plain cipher is aes-cbc-essiv:sha256, luks is aes-xts-plain64
+declare -x Default_Excludes=""
+# default cryptsetup Password hashing: ripemd160
+declare -x Default_Password_Hashes="sha512 sha256 ripemd160"
+
+declare -i Default_Padding=60
+
+# Global cli argument flags
+
+# Global state
+declare -l Crypt_Devices=""
+declare -i Crypt_Is_Mapped=0 # pseudo boolean
+declare -i Crypt_Key_Size=0 # integer
+
+# Global Return Code (inherited)
+declare -i Return_Code=0
+
+declare -x Version="0.1";
+
+# Function_Names
+
+# umount & close (an open) crypt
+function cryptClose() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    local caller="$1"
+
+    if [ "${caller}" == "" ]; then
+        local caller="${FUNCNAME}"
+    fi
+
+    local crypt_devices="$2"
+
+    if [ "$crypt_devices" == "" ]; then
+        cryptDevices ${caller}
+        local crypt_devices="$Crypt_Devices"
+    fi
+
+    local close_reason="$3"
+    if [ "$close_reason" != "" ]; then
+        if [ "$close_reason" != "" ] && [[ $(echo "$close_reason" | grep ^\  ) == "" ]]; then
+            close_reason=" ($close_reason)"
+        fi
+    fi
+
+    if [ "$crypt_devices" != "" ]; then
+
+        local crypt_device=""
+        for crypt_device in $crypt_devices; do
+            cryptName "${caller}" "${crypt_device}"
+            local crypt_name=$Crypt_Name
+            if [ "$crypt_name" == "" ]; then
+                debug "dm-crypt not open on $crypt_device (no name)" 2
+            else
+                if [ -b /dev/mapper/$crypt_name ]; then
+                    cryptsetup close $crypt_name &> /dev/null
+                    Return_Code=$?
+                    if [ $Return_Code -eq 0 ]; then
+                        cryptEcho "${caller}" "${FUNCNAME}" "[${crypt_device}][${crypt_name}]" "successfully closed${close_reason}"
+                    else
+                        cryptEcho "${caller}" "${FUNCNAME}" "[${crypt_device}][${crypt_name}]" "ERROR${close_reason}"
+                        continue
+                    fi
+                else
+                    debug "dm-crypt not open on $Crypt_Device${close_reason}" 22
+                fi
+            fi
+        done
+    else
+        cryptEcho "${caller}" "${FUNCNAME}" "no dm-crypt devices found${close_reason}"
+    fi
+
+    # end function logic
+
+    debugFunction $@
+
+}
+
+# validate & (re)set global Crypt_Devices
+function cryptDevices() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    local caller="$1"
+
+    if [ "${caller}" == "" ]; then
+        local caller="${FUNCNAME}"
+    fi
+
+    local crypt_devices
+
+    local crypt_excludes
+    if [ "$crypt_excludes" == "" ]; then
+        if [ "$Excludes" != "" ]; then
+            crypt_excludes="$Excludes"
+        else
+            crypt_excludes="$Default_Excludes"
+        fi
+    fi
+
+    crypt_excludes=$(listUnique "$crypt_excludes")
+    debugValue crypt_excludes 10
+
+    if [ "$Crypt_Devices" != "" ]; then
+        debug "dm-crypt resetting devices" 5
+        unset crypt_device
+    fi
+
+    if [ "$Crypt_Devices" == "" ]; then
+
+        # Crypt_Devices hasn't been set yet, so use command line global Devices if given
+
+        if [ "$Devices" != "" ]; then
+
+            # cryptDevices may be called multiple times, but the cli devices only need to be counted once
+            # so, if Devices was set via cli arg then test for the global Devices_Count set here
+
+            if [ "$Devices_Count" == "" ]; then
+
+                cryptEcho "${caller}" "${FUNCNAME}" "counting devices"
+
+                Devices_Count=0
+
+                Devices=$(listUnique "$Devices")
+
+                local device
+                for device in $Devices; do
+                    # count the number of (unique) devices given (once)
+                    Devices_Count=$((Devices_Count+1))
+                done
+                unset device
+
+            fi
+
+            if [ $Setup_Flag -eq 0 ] && [ $Devices_Count -ne 1 ]; then
+                usage "--setup requires an explicit --device <value> (too many given)"
+            fi
+
+            debugValue Devices 9 $Devices_Count
+
+            Crypt_Devices="$Devices"
+
+        else
+
+            if [ $Setup_Flag -eq 0 ]; then
+                usage "--setup requires an explicit --device <value>"
+            fi
+
+        fi
+    fi
+
+    Crypt_Devices=$(listUnique "$Crypt_Devices")
+    Crypt_Devices_Count=0
+
+    local block_devices=$(lsblk -ailnp --output Name 2> /dev/null) # list device names (in order)
+
+    if [ "$Crypt_Devices" == "" ]; then
+
+        if [ "${caller}" == "cryptInit" ]; then
+            cryptEcho "${caller}" "${FUNCNAME}" "evaluating dm-crypt devices"
+        fi
+
+        # Crypt_Devices isn't set so start with the full block device list
+
+        for block_device in $block_devices; do
+            crypt_devices+=" $block_device"
+        done
+
+        Crypt_Devices=$(listUnique "$crypt_devices")
+
+        debugValue Crypt_Devices 23
+
+        unset block_device crypt_devices
+
+    else
+
+        if [ "${caller}" == "cryptInit" ]; then
+            cryptEcho "${caller}" "${FUNCNAME}" "checking dm-crypt devices"
+        fi
+
+        # Crypt_Devices has already been set, verify them
+        # ensure full device paths & only use devices that exist (warn otherwise)
+
+        local crypt_device=""
+        for crypt_device in $Crypt_Devices; do
+            debugValue crypt_device 30
+
+            local -i dev_device=0
+
+            for block_device in $block_devices; do
+                local device_block=$(echo "$block_device" | awk -F\/ '{print $NF}')
+                debugValue block_device 30 $device_block
+                if [ "$crypt_device" == "$block_device" ] || [ "$crypt_device" == "$device_block" ]; then
+                    dev_device=1
+                    crypt_devices+=" $block_device"
+                    break
+                fi
+            done
+            if [ $dev_device -eq 0 ]; then
+                debugValue crypt_device 2 MISSING
+                aborting "$crypt_device not found"
+            else
+                debugValue crypt_device 30 $block_device
+            fi
+        done
+
+        Crypt_Devices=$(listUnique "$crypt_devices")
+
+        debugValue Crypt_Devices 23
+
+        unset block_device crypt_device crypt_devices
+
+    fi
+
+    local crypt_device=""
+    for crypt_device in $Crypt_Devices; do
+
+        # the following depend on this --output order
+
+        local block_ls=$(lsblk -ainpP --output PKNAME,NAME,KNAME,MOUNTPOINT,FSTYPE,TYPE "$crypt_device" 2> /dev/null)
+
+        debugValue block_ls 25
+
+        local block_type=$(lsblk -ailnp --output TYPE "$crypt_device" 2> /dev/null | head -1)
+
+        debugValue block_type 26
+
+        # start with only real disks or partitions
+
+        if [ "$block_type" != "disk" ] && [ "$block_type" != "part" ]; then
+            debug "continue; $crypt_device not a disk or part" 29
+            continue
+        fi
+
+        local -i block_list_count=0
+        local -i block_list_count=$(echo "$block_ls" | wc -l)
+
+        # skip; shouldn't happen
+
+        if [ $block_list_count -eq 0 ]; then
+            debug "continue; $crypt_device block_list_count is zero" 29
+            continue
+        fi
+
+        debugValue crypt_device 27 "$block_type, count $block_list_count"
+
+        # skip; a hack, for now ... luks devices are not supported
+        cryptsetup luksDump $crypt_device &> /dev/null
+        if [ $? -eq 0 ]; then
+            debug "continue; $crypt_device has a luks header" 29
+            if [ $Debug -gt 0 ]; then
+                echo
+                cryptsetup status $crypt_name
+                echo
+            fi
+            continue
+        fi
+
+        # skip; explicit exclude
+
+        local exclude=0
+        local -l crypt_exclude
+
+        for crypt_exclude in $crypt_excludes; do
+            if [ "$crypt_exclude" == "crypttab" ]; then continue; fi
+
+            local exclude_device="/dev/$(echo "$crypt_exclude" | awk -F\/ '{print $NF}')"
+            debugValue crypt_exclude 30 $exclude_device
+            if [ "$crypt_device" == "$exclude_device" ] || [ "$crypt_device" == "$crypt_exclude" ]; then
+                if [ "${caller}" == "cryptInit" ]; then
+                    cryptEcho "${caller}" "${FUNCNAME}" "[${crypt_device}]" "excluding device $crypt_device"
+                fi
+                local exclude=1
+                break
+            fi
+
+            local exclude_name=$(lsblk -ailn --output Name $crypt_device 2> /dev/null | tail -1)
+            if [ "$crypt_exclude" == "$exclude_name" ]; then
+                local exclude_device=$(lsblk -ailnp --output Name $crypt_device 2> /dev/null | tail -2 | head -1)
+                debugValue crypt_exclude 30 "$exclude_device, $exclude_name"
+                if [ "$crypt_device" == "$exclude_device" ] || [ "$crypt_device" == "$crypt_exclude" ]; then
+                    if [ "${caller}" == "cryptInit" ]; then
+                        cryptEcho "${caller}" "${FUNCNAME}" "[${crypt_device}][${exclude_name}]" "excluding name $exclude_name"
+                    fi
+                    local exclude=1
+                    break
+                fi
+            fi
+
+            local exclude_uuid=$(lsblk -ailnp --output UUID $crypt_device 2> /dev/null)
+            if [ "$crypt_exclude" == "$exclude_uuid" ]; then
+                if [ "${caller}" == "cryptInit" ]; then
+                    cryptEcho "${caller}" "${FUNCNAME}" "[${crypt_device}][${exclude_name}]" "excluding filesystem uuid $exclude_uuid"
+                fi
+                local exclude=1
+                break
+            fi
+
+            local exclude_partuuid=$(lsblk -ailnp --output PARTUUID $crypt_device 2> /dev/null)
+            if [ "$crypt_exclude" == "$exclude_partuuid" ]; then
+                if [ "${caller}" == "cryptInit" ]; then
+                    cryptEcho "${caller}" "${FUNCNAME}" "[${crypt_device}][${exclude_name}]" "excluding partition uuid $exclude_partuuid"
+                fi
+                local exclude=1
+                break
+            fi
+        done
+        unset exclude_device crypt_name exclude_uuid exclude_partuuid crypt_exclude
+
+        if [ $exclude -eq 1 ]; then
+            continue
+        fi
+
+        local block_fstype=$(lsblk -ailnp --output FSTYPE "$crypt_device" 2> /dev/null | head -1)
+        debugValue block_fstype 28
+
+        local block_mountpoint=$(lsblk -ailnp --output MOUNTPOINT "$crypt_device" 2> /dev/null | head -1)
+        debugValue block_mountpoint 28
+
+        # valid; an apparently empty single disk or partition
+
+        if [ "$block_list_count" -eq 1 ] && [ "$block_fstype" == "" ] && [ "$block_mountpoint" == "" ]; then
+            crypt_devices+=" $crypt_device"
+            debug "qualifier; $crypt_device is valid" 3
+            continue
+        fi
+
+        # everything past here is to find potentially open and/or mounted dm-crypt devices (to cryptUnmount)
+
+        # what if this device is in /etc/crypttab?
+
+        local crypttab=0
+        if [ -r /etc/crypttab ]; then
+            local crypttab_names=$(cat /etc/crypttab | grep -v "^#" | awk '{print $1}')
+
+            for crypttab_name in $crypttab_names; do
+
+                debugValue crypttab_name 27
+
+                local crypttab_device=$(cat /etc/crypttab | grep "^${crypttab_name}[ \t]" | awk '{print $2}')
+
+                if [ "$crypttab_device" == "" ]; then continue; fi
+
+                local crypttab_device_block_name=$(lsblk -ailnp --output Name "$crypttab_device" 2> /dev/null | head -1)
+                debugValue crypttab_device 27 $crypttab_device_block_name
+
+                if [ "$crypttab_device_block_name" == "$crypt_device" ]; then
+                    local crypt_exclude
+
+                    for crypt_exclude in $crypt_excludes; do
+                        if [ "$crypt_exclude" == "crypttab" ]; then
+                            if [ "${caller}" == "cryptInit" ]; then
+                                cryptEcho "${caller}" "${FUNCNAME}" "[${crypt_device}][${crypttab_name}]" "excluded; already mapped via /etc/crypttab"
+                            fi
+                            local crypttab=1
+                        fi
+                    done
+                    break
+                fi
+            done
+        fi
+
+        if [ $crypttab -eq 1 ]; then
+            continue
+        fi
+
+        # skip; a mounted, non-crypt single disk or partition
+
+        if [ "$block_list_count" -eq 1 ] && [ "$block_fstype" != "crypt" ] && [ "$block_mountpoint" != "" ]; then
+            debug "continue; $crypt_device block_list count is 1, block_fstype is not crypt, block_mountmount is not null" 29
+            continue
+        fi
+
+        # skip; an unmounted, non-crypt single disk or partition
+
+        if [ "$block_list_count" -eq 1 ] && [ "$block_fstype" != "crypt" ]  && [ "$block_fstype" != "" ] && [ "$block_mountpoint" == "" ]; then
+            debug "continue; $crypt_device block_list count is 1, block_fstype is not crypt, block_fstype is not null, block_mountmount is null" 29
+            continue
+        fi
+
+        local block_type_crypt=$(lsblk -ailnp --output TYPE "$crypt_device" 2> /dev/null | grep crypt)
+
+        # skip; there are no dm-crypt types on this device
+
+        if [ "$block_type_crypt" == "" ]; then
+            debug "continue; $crypt_device block_type_crypt is null" 29
+            continue
+        fi
+
+        debugValue block_type_crypt 29
+
+        local block_pkname=$(lsblk -ailnp --output PKNAME "$crypt_device" 2> /dev/null | head -1)
+
+        # valid; there are open dm-crypt types on this disk
+
+        if [ $block_list_count -eq 2 ] && [ "$block_type_crypt" == "crypt" ]; then
+            crypt_devices+=" $crypt_device"
+            debug "qualifier: $crypt_device has open dm-crypt types" 3
+            continue
+        fi
+
+        # skip; there are dm-crypt types on a partition of this device
+
+        if [ "$block_pkname" == "" ]; then
+            debug "continue; $crypt_device block_pkname is null" 29
+            continue
+        fi
+
+        debugValue block_pkname 30
+
+        # valid; there are dm-crypt types on this partition
+
+        if [ "$block_pkname" != "" ] && [ "$block_type_crypt" == "crypt" ]; then
+            crypt_devices+=" $crypt_device"
+            debug "qualifier: $crypt_device has dm-crypt types" 3
+            continue
+        fi
+
+        lsblk -ainpP --output PKNAME,NAME,KNAME,MOUNTPOINT,FSTYPE,TYPE "$crypt_device" 2> /dev/null
+
+        aborting "$crypt_device invalid, unknown"
+
+    done
+    unset crypt_device
+
+    Crypt_Devices=$(listUnique "$crypt_devices")
+
+    local crypt_device=""
+    for crypt_device in $Crypt_Devices; do
+
+        Crypt_Devices_Count=$((Crypt_Devices_Count+1))
+
+        if [ "${caller}" == "cryptInit" ]; then
+            cryptEcho "${caller}" "${FUNCNAME}" "[${crypt_device}]" "including device $crypt_device"
+        fi
+
+    done
+    unset crypt_device
+
+    debug "${FUNCNAME}($1) Crypt_Devices='$Crypt_Devices' [$Crypt_Devices_Count]" 5
+
+    if [ "$Devices" != "" ] && [ "$Crypt_Devices" == "" ] && [ $Crypt_Devices_Count -eq 0 ]; then
+        aborting "$Devices not valid"
+    fi
+
+    if [ "$Crypt_Devices" == "" ] && [ $Crypt_Devices_Count -eq 0 ]; then
+        aborting "dm-crypt devices not valid"
+    fi
+
+    # end function logic
+
+    debugFunction $@
+
+}
+
+# output a formatted message
+function cryptEcho() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    local caller="$1"
+
+    if [ "${caller}" == "" ]; then
+        local caller="${FUNCNAME}"
+    fi
+
+    local funcname="$2"
+
+    if [ "${funcname}" == "" ]; then
+        local funcname="${FUNCNAME}"
+    fi
+
+    local info="$3"
+
+    local detail="$4"
+
+    if [ "$detail" == "" ]; then
+        if [ "$info" == "" ]; then
+            detail="???"
+        else
+            detail="$info"
+            info=""
+        fi
+    fi
+
+    if [ "$caller" == "$funcname" ]; then
+        info="[${caller}]${info}"
+    else
+        info="[${caller}]${info}[${funcname}]"
+    fi
+
+    debugValue info 222 "$detail"
+
+    printf "+ %-${Default_Padding}s %s\n" "${info}" "${detail}"
+
+    # end function logic
+
+    debugFunction $@
+
+}
+
+# validate & (re)set global Crypt_Is_Mapped (pseudo boolean)
+function cryptIsMapped() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    local caller="$1"
+
+    if [ "${caller}" == "" ]; then
+        local caller="${FUNCNAME}"
+    fi
+
+    local crypt_devices="$2"
+
+    # blech, bash passing via global; reset it to off
+    Crypt_Is_Mapped=0
+
+    if [ "$crypt_devices" == "" ]; then
+        return # reset if called with no crypt_devices
+    fi
+
+    if [ "$crypt_devices" != "" ]; then
+
+        local crypt_device=""
+        for crypt_device in $crypt_devices; do
+
+            # if the dm-crypt is opened with the correct hash & cipher then it will have a valid uuid
+            # (unless it has no filesystem)
+
+            cryptName "${caller}" "${crypt_device}"
+            local crypt_name=$Crypt_Name
+            if [ "$crypt_name" == "" ]; then
+                debug " no dm-crypt on $crypt_device" 5
+            else
+                local crypt_cipher=$(cryptsetup status $crypt_name 2> /dev/null | grep cipher: | awk '{print $NF}')
+                local dm_uuid=$(lsblk -ailnp --output UUID /dev/mapper/$crypt_name 2> /dev/null)
+                if [ "$dm_uuid" == "" ]; then
+                    if [ $Setup_Flag -eq 1 ]; then
+                        if [ "${caller}" != "unmount" ]; then
+                            cryptUnmount "${caller}" "${crypt_device}" "UUID is Null"
+                        fi
+                    else
+                        local crypt_active=$(cryptsetup status $crypt_name 2> /dev/null | grep "$crypt_name is active")
+                        if [ "$crypt_active" != "" ]; then
+                            cryptEcho "${caller}" "${FUNCNAME}" "[${crypt_device}][${crypt_name}]" "successfully opened dm-crypt, cipher $crypt_cipher"
+                            Crypt_Is_Mapped=1
+
+                            if [ $Debug -gt 0 ]; then
+                                echo
+                                cryptsetup status $crypt_name
+                                echo
+                            fi
+
+                            break
+                        else
+                            if [ "${caller}" != "unmount" ]; then
+                                cryptUnmount "${caller}" "${crypt_device}" "dm-crypt is inactive"
+                            fi
+                        fi
+                    fi
+                else
+                    debugValue dm_uuid 24 OK
+
+                    cryptEcho "${caller}" "${FUNCNAME}" "[${crypt_device}][${crypt_name}]" "successfully opened dm-crypt, cipher $crypt_cipher"
+
+                    # blech, bash passing via global; set it to on
+
+                    Crypt_Is_Mapped=1
+
+                    if [ $Debug -gt 0 ]; then
+                        echo
+                        cryptsetup status $crypt_name
+                        echo
+                    fi
+
+                    break
+                fi
+            fi
+
+        done
+    else
+        cryptEcho "${caller}" "${FUNCNAME}" "dm-crypt device not found"
+    fi
+
+    # end function logic
+
+    debugFunction $@
+
+}
+
+function cryptInit() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    local caller="$1"
+
+    if [ "${caller}" == "" ]; then
+        local caller="${FUNCNAME}"
+    fi
+
+    # initialize & validate devices
+    cryptDevices "${caller}"
+
+    # initialize & validate keys
+    cryptKey "${caller}"
+
+    # initialize ciphers
+    if [ "$Crypt_Ciphers" == "" ]; then
+        if [ "$Ciphers" != "" ]; then
+            Crypt_Ciphers=$Ciphers
+        else
+            Crypt_Ciphers=$Default_Ciphers
+        fi
+    fi
+    Crypt_Ciphers=$(listUnique "$Crypt_Ciphers")
+
+    debugValue Crypt_Ciphers 15
+
+    # validate the ciphers
+
+    for Crypt_Cipher in $Crypt_Ciphers; do
+
+        if [   "$Crypt_Cipher" == "default" ]; then continue; fi
+
+        debugValue Crypt_Cipher 19
+
+        local -l cipher=$(echo "$Crypt_Cipher" | awk -F- '{print $1}')
+        local -l cipher_valid=""
+        local -l mode=$(echo "$Crypt_Cipher" | awk -F- '{print $2}')
+        local -l mode_valid=""
+        local -l iv=$(echo "$Crypt_Cipher" | awk -F- '{print $3}')
+        local -l iv_valid=""
+
+        if [ "$cipher" == "" ] || [ "$mode" == "" ] || [ "$iv" == "" ]; then
+            usage "--cipher '$Crypt_Cipher' not supported"
+        fi
+
+        local -l supported_ivs="plain plain64 essiv:sha256"
+
+        for supported_iv in $supported_ivs; do
+            if [ "$iv" == "$supported_iv" ]; then
+                local iv_valid=true
+                break
+            fi
+        done
+
+        if [ "$iv_valid" == "" ]; then
+            aborting "cipher iv generator '$iv' is not supported by cryptsetup"
+        fi
+
+        local mode_valid=$(cat /proc/crypto | egrep -e '^name\ |^type\ |^$' | sed -e ':r;$!{N;br};s/\ntype//g' -e 's/  */ /g' | egrep -e ": blkcipher$|: ablkcipher$| skcipher$" | sort -u | grep ": ${mode}(${cipher}) :")
+
+        # this can be avoided by preloading the module, e.g. 
+        # echo twofish > /etc/modules-load.d/twofish.conf
+
+        if [ "$mode_valid" == "" ]; then
+            aborting "block cipher encryption mode '${mode}(${cipher})' is not loaded in this kernel (permanently add the module to /etc/modules-load.d/dm-crypt.conf or temporarily run 'cryptsetup benchmark' to load all modules; try again)"
+        fi
+
+        local cipher_valid=$(cat /proc/crypto | egrep -e '^name\ |^type\ |^$' | sed -e ':r;$!{N;br};s/\ntype//g' -e 's/  */ /g' | egrep -e ": cipher$" | sort -u | grep ": ${cipher} :")
+
+        if [ "$cipher_valid" == "" ]; then
+            aborting "encryption block cipher '$cipher' is not loaded in this kernel (run 'cryptsetup benchmark' to load all modules, and try again)"
+        fi
+
+    done
+    unset Crypt_Cipher
+
+    # validate the password hash
+    # todo; cli arg
+    if [ "$Crypt_Password_Hashes" == "" ]; then
+        if [ "$Password_Hashes" != "" ]; then
+            Crypt_Password_Hashes=$Password_Hashes
+        else
+            Crypt_Password_Hashes=$Default_Password_Hashes
+        fi
+    fi
+    Crypt_Password_Hashes=$(listUnique "$Crypt_Password_Hashes")
+    debugValue Crypt_Password_Hashes 15
+
+    for Crypt_Password_Hash in $Crypt_Password_Hashes; do
+        debugValue Crypt_Password_Hash 19
+        local -l hash_valid=""
+        local -l supported_hashes="md5 ripemd160 sha256 sha384 sha512"
+
+        for supported_hash in $supported_hashes; do
+            if [ "$Crypt_Password_Hash" == "$supported_hash" ]; then
+                local hash_valid=true
+                break
+            fi
+        done
+        if [ "$hash_valid" == "" ]; then
+            aborting "password hash '$Crypt_Password_Hash' is not supported"
+        fi
+    done
+
+    # end function logic
+
+    debugFunction $@
+
+}
+
+# (re)set global Crypt_Key
+# (re)set global Crypt_Key_Size
+# (re)set global Crypt_Key_Shadow
+function cryptKey() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    local caller="$1"
+
+    if [ "${caller}" == "" ]; then
+        local caller="${FUNCNAME}"
+    fi
+
+    local crypt_devices="$2"
+
+    Crypt_Key=""
+    Crypt_Key_Size=0
+
+    if [ "$Key_Flag" == "" ]; then
+        Key_Flag=1
+    fi
+
+    if [ $Key_Flag -eq 1 ] || [ "$crypt_devices" == "" ]; then
+        debug "Key_Flag=1, reset Crypt_Key & Crypt_Key_Size" 10
+        return
+    fi
+
+    local -i crypt_device_counter=0
+
+    local crypt_device=""
+    for crypt_device in $crypt_devices; do
+        if [ ! -b "$crypt_device" ]; then
+            debug "$crypt_device is not a block device, reset Crypt_Key & Crypt_Key_Size" 10
+            continue
+        fi
+
+        crypt_device_counter=$((crypt_device_counter+1))
+
+        # for the sake of consistency, this function was put in a 'crypt_devices' loop, but it should never be called that way ...
+        if [ $crypt_device_counter -ne 1 ]; then
+            # should never happen
+            aborting "'$crypt_device' counter = $crypt_device_counter (defect?)"
+        fi
+
+        local crypt_device_uuid=""
+        local crypt_device_partuuid=$(lsblk -ailnp --output PARTUUID "$crypt_device" 2> /dev/null)
+
+        debugValue crypt_device_partuuid 6 $crypt_device
+
+        if [ "$crypt_device_partuuid" == "" ]; then
+            local crypt_device_uuid=$(lsblk -ailnp --output UUID "$crypt_device" 2> /dev/null)
+            debugValue crypt_device_uuid 6 $crypt_device
+        fi
+
+        # --key was given with a value
+        if [ "$Crypt_Key" == "" ]; then
+            if [ $Key_Flag -eq 0 ] && [ "$Key" != "" ]; then
+                if [ ! -d "$Key" ]; then
+                    local key_dir=$(dirname "$Key")
+                    if [ "$key_dir" == "." ]; then
+                        if [ -r "$Key" ]; then
+                            # the key exists in pwd, so use it
+                            Crypt_Key="$Key"
+                        else
+                            # look for the key in Default_Key_Dir
+                            Crypt_Key="${Default_Key_Dir}/$Key"
+                        fi
+                    else
+                        Crypt_Key="$Key"
+                    fi
+                    unset key_dir
+                else
+                    cryptName "${caller}" "${crypt_device}"
+                    local crypt_name=$Crypt_Name
+                    if [ "$crypt_name" == "" ]; then
+                        aborting "${FUNCNAME} could not determine dm-crypt name" 1
+                    fi
+                    Crypt_Key="${Key}/${Crypt_Name}-$(hostid).key"
+                    unset Crypt_Name
+                fi
+            fi
+        fi
+
+        # --key was given without a value
+        if [ "$Crypt_Key" == "" ]; then
+            if [ $Key_Flag -eq 0 ] && [ "$Key" == "" ]; then
+                if [ "$crypt_device" == "" ]; then
+                    aborting "${FUNCNAME} was called incorrectly (defect?)"
+                else
+                    cryptName "${caller}" "${crypt_device}"
+                    local crypt_name=$Crypt_Name
+                    if [ "$crypt_name" == "" ]; then
+                        aborting "${FUNCNAME} could not determine dm-crypt name" 1
+                    fi
+                    Crypt_Key="${Default_Key_Dir}/${Crypt_Name}-$(hostid).key"
+                    unset Crypt_Name
+                fi
+            fi
+        fi
+
+        # should never happen
+        if [ "$Crypt_Key" == "" ]; then
+            aborting "crypt key is Null (defect?)"
+        fi
+
+        Crypt_Key_Shadow=$(echo "$Crypt_Key" | sed -e '/\.key/s///g')
+        Crypt_Key_Shadow+=".shadow"
+        debugValue Crypt_Key_Shadow 6
+
+        if [ "$Crypt_Key_Bytes" == "" ]; then
+            if [ "$Key_Bytes" != "" ]; then
+                Crypt_Key_Bytes=$Key_Bytes
+            else
+                Crypt_Key_Bytes=$Default_Key_Bytes
+            fi
+        fi
+        declare -i Crypt_Key_Bytes=$(echo "$Crypt_Key_Bytes" | sed -e 's/[^0-9]*//g')
+        if [ "$Crypt_Key_Bytes" == "" ]; then
+            Crypt_Key_Bytes=0
+        fi
+
+        if [ $Crypt_Key_Bytes -lt 256 ]; then
+            usage "--bytes $Crypt_Key_Bytes must be >= 256"
+        fi
+        debugValue Crypt_Key_Bytes 15
+
+        if [ "$Crypt_Key" != "" ] && [ -f "$Crypt_Key" ]; then
+            local crypt_key=1
+        else
+            local crypt_key=0
+        fi
+
+        if [ $Setup_Flag -eq 0 ] || [ ! -r "$Crypt_Key" ]; then
+            # if an old shadow exists then move it out of the way
+            if [ "$Crypt_Key_Shadow" != "" ]; then
+                if [ ! -d "$Crypt_Key_Shadow" ]; then
+                    if [ -r "$Crypt_Key_Shadow" ]; then
+                        if [ -w "$Crypt_Key_Shadow" ]; then
+                            # important!  don't 'automatically' remove old shadow copies!!
+                            if [ "$Uniq" == "" ]; then Uniq=$(date +%Y%m%d)-$(uuidgen); fi # important!
+                            mv "${Crypt_Key_Shadow}" "${Crypt_Key_Shadow}.$Uniq"
+                            Return_Code=$?
+                            if [ $Return_Code -ne 0 ]; then
+                                aborting "mv $Crypt_Key_Shadow ${crypt_shdaow}.$Uniq failed (permissions?)"
+                            else
+                                cryptEcho "${caller}" "${FUNCNAME}" "[$crypt_device][$crypt_name]" "moved old shadow to ${Crypt_Key_Shadow}.$Uniq"
+                            fi
+                        else
+                            aborting "$Crypt_Key_Shadow file not writable; (permissions?)"
+                        fi
+                    fi
+                fi
+            fi
+        fi
+
+        if [ "$Crypt_Key" != "" ] && [ ! -r "$Crypt_Key" ]; then
+            if [ -f "$Crypt_Key" ]; then
+                warning "$Crypt_Key file not readable"
+                Crypt_Key=""
+                return
+            else
+                question "generate new key file for $crypt_device"
+                if [ $Question_Flag -eq 0 ]; then
+                    cryptName "${caller}" "${crypt_device}"
+                    local crypt_name=$Crypt_Name
+                    if [ "$crypt_name" == "" ]; then
+                        aborting "${FUNCNAME} could not determine dm-crypt name" 1
+                    fi
+                    cryptEcho "${caller}" "${FUNCNAME}" "[$crypt_device][$crypt_name]" "generating new $Crypt_Key_Bytes byte key file"
+
+                    if [ ! -f "$Crypt_Key" ] && [ ! -h "$Crypt_Key" ]; then
+                        # automatically generate a key file
+                        local crypt_key_bytes=$((Crypt_Key_Bytes))
+                        if [ $crypt_key_bytes -le 0 ]; then
+                            aborting "crypt key bytes is <= 0"
+                        fi
+                        dd bs=${crypt_key_bytes} count=1 if=/dev/urandom of="$Crypt_Key" &> /dev/null
+                        Return_Code=$?
+                        if [ $Return_Code -ne 0 ]; then
+                            aborting "failed to generate $Crypt_Key (permissions?)"
+                        fi
+                    fi
+                else
+                    warning "$Crypt_Key file not found"
+                    Crypt_Key=""
+                    return
+                fi
+            fi
+        fi
+
+        if [ ! -f "$Crypt_Key_Shadow" ]; then
+            cryptEcho "${caller}" "${FUNCNAME}" "[$crypt_device][$crypt_name]" "generating new $Crypt_Key_Shadow file"
+            cp -f "${Crypt_Key}" "${Crypt_Key_Shadow}"
+            Return_Code=$?
+            if [ $Return_Code -ne 0 ]; then
+                aborting "cp $Crypt_Key to $Crypt_Key_Shadow failed (permissions?)"
+            fi
+        fi
+
+        # shouldn't happen; be sure ...
+        if [ "$Crypt_Key" == "" ]; then
+            aborting "$Crypt_Key is Null (defect?)"
+        else
+            if [ ! -r "$Crypt_Key" ]; then
+                aborting "$Crypt_Key file not readble (defect?)"
+            fi
+        fi
+        if [ -w "$Crypt_Key" ]; then
+            chmod 400 "$Crypt_Key" &> /dev/null
+            Return_Code=$?
+            if [ $Return_Code -ne 0 ]; then
+                aborting "chmod 400 $Crypt_Key failed (permissions?)"
+            fi
+        fi
+        if [ -r "$Crypt_Key" ]; then
+            Crypt_Key_Size=$(find "$Crypt_Key" -printf %s) # bytes
+        fi
+
+        if [ "$Crypt_Key_Shadow" == "" ]; then
+            aborting "$Crypt_Key_Shadow file is Null (defect?)"
+        else
+            if [ ! -r "$Crypt_Key_Shadow" ]; then
+                aborting "$Crypt_Key_Shadow file not readble (defect?)"
+            fi
+        fi
+        if [ -w "$Crypt_Key_Shadow" ]; then
+            chmod 400 "$Crypt_Key_Shadow" &> /dev/null
+            Return_Code=$?
+            if [ $Return_Code -ne 0 ]; then
+                aborting "chmod 400 $Crypt_Key_Shadow failed (permissions?)"
+            fi
+        fi
+        if [ -r "$Crypt_Key_Shadow" ]; then
+            Crypt_Key_Shadow_Size=$(find "$Crypt_Key_Shadow" -printf %s) # bytes
+        fi
+
+        if [ "$Crypt_Key_Size" == "" ]; then
+            Crypt_Key_Size=0
+        fi
+
+        if [ "$Crypt_Key_Shadow_Size" == "" ]; then
+            Crypt_Key_Shadow_Size=0
+        fi
+
+        debugValue Crypt_Key 3 "size=$Crypt_Key_Size"
+        debugValue Crypt_Key_Shadow 3 "size=$Crypt_Key_Shadow_Size"
+
+        # everything from here on is for additional validation of the key & shadow files
+
+        # some fail safes;
+
+        # the crypt key is null
+        if [ "$Crypt_Key" == "" ]; then
+            aborting "dm-crypt key is null"
+        fi
+
+        # the crypt key is not readable
+        if [ ! -r "$Crypt_Key" ]; then
+            aborting "dm-crypt key $Crypt_Key not readable"
+        fi
+
+        # the crypt key byte size is zero
+        if [ $Crypt_Key_Size -eq 0 ]; then
+            aborting "dm-crypt key byte size is 0 (defect?)"
+        fi
+
+        # the crypt key shadow is null
+        if [ "$Crypt_Key_Shadow" == "" ]; then
+            aborting "dm-crypt key shadow is null"
+        fi
+
+        # the crypt key shadow is not readable
+        if [ ! -r "$Crypt_Key_Shadow" ]; then
+            aborting "dm-crypt key shadow $Crypt_Key_Shadow not readable"
+        fi
+
+        # the crypt key shadow byte size is zero
+        if [ $Crypt_Key_Shadow_Size -eq 0 ]; then
+            aborting "dm-crypt key shadow byte size is 0 (defect?)"
+        fi
+
+        # if the key and chain files differ, abort
+        diff -1 "${Crypt_Key}" "${Crypt_Key_Shadow}" &> /dev/null
+        Return_Code=$?
+        if [ $Return_Code -ne 0 ]; then
+            aborting "$Crypt_Key and $Crypt_Key_Shadow differ"
+        fi
+
+        # check the entropy/strength of the key file (could be much better)
+        if [ $Crypt_Key_Size -ne 0 ]; then
+            if [ $Crypt_Key_Size -ge 256 ]; then
+                cryptEcho "${caller}" "${FUNCNAME}" "[$crypt_device][$crypt_name]" "strength of $Crypt_Key is $Crypt_Key_Size bytes (Extremely Strong)"
+            else
+                if [ $Crypt_Key_Size -lt 256 ] && [ $Crypt_Key_Size -ge 128 ] ; then
+                    cryptEcho "${caller}" "${FUNCNAME}" "[$crypt_device][$crypt_name]" "strength of $Crypt_Key is $Crypt_Key_Size bytes (Very Strong)"
+                else
+                    if [ $Crypt_Key_Size -lt 128 ] && [ $Crypt_Key_Size -ge 60 ] ; then
+                        cryptEcho "${caller}" "${FUNCNAME}" "[$crypt_device][$crypt_name]" "strength of $Crypt_Key is $Crypt_Key_Size bytes (Strong)"
+                    else
+                        if [ $Crypt_Key_Size -lt 60 ] && [ $Crypt_Key_Size -ge 36 ] ; then
+                            cryptEcho "${caller}" "${FUNCNAME}" "[$crypt_device][$crypt_name]" "strength of $Crypt_Key is $Crypt_Key_Size bytes (Reasonable)"
+                        else
+                            if [ $Crypt_Key_Size -lt 36 ] && [ $Crypt_Key_Size -ge 28 ] ; then
+                                warning "strength of $Crypt_Key is $Crypt_Key_Size bytes <= 35 bytes (Weak)"
+                            else
+                                warning "strength of $Crypt_Key is $Crypt_Key_Size bytes <= 27 bytes (Extremely Weak)"
+                            fi
+                        fi
+                    fi
+                fi
+            fi
+        fi
+    done
+    unset crypt_device
+
+    # end function logic
+
+    debugFunction $@
+
+}
+
+# lists (potential) crypt devices
+function cryptList() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    local caller="$1"
+
+    if [ "${caller}" == "" ]; then
+        local caller="${FUNCNAME}"
+    fi
+
+    local crypt_devices="$2"
+
+    if [ "$crypt_devices" == "" ]; then
+        cryptDevices "${caller}"
+        local crypt_devices="$Crypt_Devices"
+    fi
+
+    if [ "$crypt_devices" != "" ]; then
+        cryptEcho "${caller}" "${FUNCNAME}" "displaying dm-crypt devices"
+        echo
+        lsblk -o NAME,TYPE,UUID,LABEL,FSTYPE,MOUNTPOINT -p $Crypt_Devices
+    else
+        cryptEcho "${caller}" "${FUNCNAME}" "dm-crypt device not found"
+    fi
+    echo
+
+    # end function logic
+
+    debugFunction $@
+
+}
+
+# open & mount a crypt
+function cryptMount() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    local caller="$1"
+
+    if [ "${caller}" == "" ]; then
+        local caller="${FUNCNAME}"
+    fi
+
+    local crypt_devices="$2"
+
+    if [ "$crypt_devices" == "" ]; then
+        cryptDevices "${caller}"
+        local crypt_devices="$Crypt_Devices"
+    fi
+
+    if [ "$crypt_devices" != "" ]; then
+
+        local crypt_device=""
+        for crypt_device in $crypt_devices; do
+
+            # the following depend on this --output order
+            local block_ls=$(lsblk -ainpP --output PKNAME,NAME,KNAME,MOUNTPOINT,FSTYPE,TYPE "$crypt_device" 2> /dev/null)
+            debugValue block_ls 25
+
+            local block_type=$(lsblk -ailnp --output TYPE "$crypt_device" 2> /dev/null | head -1)
+            debugValue block_type 26
+
+            # start with only real disks or partitions
+            if [ "$block_type" != "disk" ] && [ "$block_type" != "part" ]; then
+                continue
+            fi
+
+            local -i block_list_count=0
+            local -i block_list_count=$(echo "$block_ls" | wc -l)
+
+            # skip; shouldn't happen
+            if [ $block_list_count -eq 0 ]; then
+                aborting "$crypt_device block list count is zero"
+            fi
+
+            if [ $block_list_count -ge 1 ]; then
+                if [ $Setup_Flag -eq 0 ] && [ "${caller}" == "cryptSetup" ]; then
+                    cryptUnmount "${caller}" "${crypt_device}" "cryptSetup"
+                fi
+                cryptOpen "${caller}" "$crypt_device"
+            fi
+
+            cryptName "${caller}" "${crypt_device}"
+            local crypt_name=$Crypt_Name
+            if [ "$crypt_name" == "" ]; then
+                aborting "${FUNCNAME} could not determine dm-crypt name" 1
+            fi
+
+            if [ $Setup_Flag -eq 0 ] && [ "${caller}" == "cryptSetup" ]; then
+                if [ -b /dev/mapper/$crypt_name ]; then
+                    warning "setup will erase all data on $crypt_device"
+                    question "create xfs filesystem on /dev/mapper/$crypt_name"
+                    if [ $Question_Flag -eq 0 ]; then
+                        cryptEcho "${caller}" "${FUNCNAME}" "[/dev/mapper/${crypt_name}][xfs]" "creating filesystem"
+                        mkfs.xfs -q -f "/dev/mapper/$crypt_name"
+                        Return_Code=$?
+                        if [ $Return_Code -ne 0 ]; then
+                            aborting "mkfs.xfs /dev/mapper/$crypt_name failed"
+                        else
+                            if [ "$Crypt_Key_Shadow" != "" ]; then
+                                if [ -w "${Crypt_Key_Shadow}.$Uniq" ]; then
+                                    question "remove ${Crypt_Key_Shadow}.$Uniq"
+                                    if [ $Question_Flag -eq 0 ]; then
+                                        rm -f "${Crypt_Key_Shadow}.$Uniq"
+                                        Return_Code=$?
+                                        if [ $Return_Code -ne 0 ]; then
+                                            aborting "rm -f ${Crypt_Key_Shadow}.$Uniq failed"
+                                        else
+                                            cryptEcho "${caller}" "${FUNCNAME}" "[/dev/mapper/${crypt_name}][xfs]" "removed old shadow ${Crypt_Key_Shadow}.$Uniq"
+                                        fi
+                                    else
+                                        warning "${Crypt_Key_Shadow}.$Uniq is now defunct"
+                                    fi
+                                fi
+                            fi
+                        fi
+                    else
+                        cryptEcho "${caller}" "${FUNCNAME}" "[/dev/mapper/${crypt_name}]" "crypt preserved"
+                    fi
+                fi
+            fi
+
+            if [ -b /dev/mapper/$crypt_name ]; then
+                local crypt_device_mountpoint=$(lsblk -ailnp --output MOUNTPOINT "/dev/mapper/$crypt_name" 2> /dev/null | head -1)
+
+                if [ "$crypt_device_mountpoint" != "" ]; then
+                    cryptEcho "${caller}" "${FUNCNAME}" "[/dev/mapper/${crypt_name}]" "mounted $crypt_device_mountpoint"
+                else
+                    local crypt_device_mountpoint=$(findmnt /mnt/${crypt_name}) # make sure nothing is mounted here
+                    if [ "$crypt_device_mountpoint" == "" ]; then
+                        local crypt_device_mountpoint="/mnt/$crypt_name"
+                        if [ ! -d "$crypt_device_mountpont" ]; then
+                            mkdir -p "$crypt_device_mountpoint"
+                            Return_Code=$?
+                            if [ $Return_Code -ne 0 ]; then
+                                aborting "mkdir $crypt_device_mountpoint failed"
+                            fi
+                        fi
+                        mount "/dev/mapper/${crypt_name}" "/mnt/${crypt_name}" &> /dev/null
+                        Return_Code=$?
+                        if [ $Return_Code -ne 0 ]; then
+                            warning "'mount /dev/mapper/${crypt_name} /mnt/${crypt_name}' failed (no filesystem?)"
+                            cryptUnmount "${caller}" "$crypt_device" "mount failed"
+                        else
+                            cryptEcho "${caller}" "${FUNCNAME}" "[/dev/mapper/${crypt_name}]" "mounted $crypt_device_mountpoint"
+                        fi
+                    else
+                        cryptEcho "${caller}" "${FUNCNAME}" "[/dev/mapper/${crypt_name}]" "not mounting filesystem"
+                    fi
+                fi
+            fi
+        done
+        unset crypt_device
+
+    else
+        cryptEcho "${caller}" "${FUNCNAME}" "dm-crypt device not found"
+    fi
+
+    # end function logic
+
+    debugFunction $@
+
+}
+
+# determine a crypt name
+function cryptName() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    local caller="$1"
+
+    if [ "${caller}" == "" ]; then
+        local caller="${FUNCNAME}"
+    fi
+
+    local crypt_devices="$2"
+
+    if [ "$crypt_devices" == "" ]; then
+        cryptDevices ${caller}
+        local crypt_devices="$Crypt_Devices"
+    fi
+
+    # if a Name is given, use it else reset global Crypt_Name
+    if [ "$Name" != "" ]; then
+        Crypt_Name="$Name"
+    else
+        Crypt_Name=""
+    fi
+
+    local -i crypt_name_count=0
+
+    if [ "$crypt_devices" != "" ]; then
+
+        local crypt_device=""
+        for crypt_device in $crypt_devices; do
+
+            local crypt_block_name=$(lsblk -ainpP --output NAME,TYPE $crypt_device 2> /dev/null | grep \"crypt\" | awk -F\" '{print $2}' | awk -F/ '{print $NF}')
+            local -i crypt_name_count=$crypt_name_count+1
+
+            if [ "$crypt_block_name" != "" ]; then
+                debugValue crypt_block_name 24
+                local crypt_name=$crypt_block_name
+            else
+                if [ "$Crypt_Name" != "" ]; then
+                    if [ $crypt_name_count -gt 1 ]; then
+                        local crypt_name="$(echo "$Crypt_Name" | awk -F/ '{print $NF}')-$crypt_name_count"
+                    else
+                        local crypt_name="$(echo "$Crypt_Name" | awk -F/ '{print $NF}')"
+                    fi
+                else
+                    local crypt_name="dm-crypt-$(echo "$crypt_device" | awk -F/ '{print $NF}')"
+                fi
+
+                local -i crypt_name_conflict=0
+                if [ "$crypt_name" != "" ]; then
+
+                    while [ -b "/dev/mapper/$crypt_name" ]; do
+                        local -i crypt_name_conflict=$crypt_name_conflict+1
+                        if [ "$Crypt_Name" != "" ]; then
+                            local crypt_name="$(echo "$Crypt_Name" | awk -F/ '{print $NF}')-$crypt_name_conflict"
+                        else
+                            local crypt_name="dm-crypt-$(echo "$crypt_device" | awk -F/ '{print $NF}')-$crypt_name_conflict"
+                        fi
+                    done
+                fi
+            fi
+
+            debugValue crypt_device 23 "$crypt_name [$crypt_name_count]"
+
+        done
+    else
+        cryptEcho "${caller}" "${FUNCNAME}" "dm-crypt device not found"
+    fi
+
+    # only set Crypt_Name global if crypt_name_count=1 (else empty it)
+    if [ $crypt_name_count -eq 1 ]; then
+        Crypt_Name=$(echo "$crypt_name" | sed -e '/\ /s//_/g')
+    else
+        Crypt_Name=""
+    fi
+
+    debugValue Crypt_Name 22 "${caller} [$crypt_name_count]"
+
+    # end function logic
+
+    debugFunction $@
+
+}
+
+# (attempt to) open a crypt
+function cryptOpen() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    local caller="$1"
+
+    if [ "${caller}" == "" ]; then
+        local caller="${FUNCNAME}"
+    fi
+
+    local crypt_devices="$2"
+
+    if [ "$crypt_devices" == "" ]; then
+        cryptDevices ${caller}
+        local crypt_devices="$Crypt_Devices"
+    fi
+
+    if [ "$crypt_devices" != "" ]; then
+
+        local crypt_device=""
+        for crypt_device in $crypt_devices; do
+
+            local -i crypt_open=0
+
+            if [ "$Crypt_Ciphers" == "" ]; then
+                cryptInit "${FUNCNAME}"
+            fi
+
+            if [ "$Crypt_Password_Hashes" == "" ]; then
+                cryptInit "${FUNCNAME}"
+            fi
+
+            cryptName "${caller}" "${crypt_device}"
+            local crypt_name=$Crypt_Name
+            if [ "$crypt_name" == "" ]; then
+                aborting "${FUNCNAME} could not determine dm-crypt name" 1
+            fi
+
+            # first, check if dm-crypt is already open
+            cryptIsMapped "${caller}" "${crypt_device}"
+            crypt_open=$Crypt_Is_Mapped
+            cryptIsMapped "${caller}" # reset
+
+            # this logic tries multiple password & ciphers hashes and ciphers;
+            # it keeps looking for a valid block uuid until it finds one or exhausts all possible combinations of options
+            # if it finds a valid dm-crypt then it will keep falling through if crypt_open -ne 0 (i.e. the dm-crypt is already open)
+
+            for Crypt_Cipher in $Crypt_Ciphers; do
+                if [ $crypt_open -ne 0 ]; then continue; fi
+
+                for Crypt_Password_Hash in $Crypt_Password_Hashes; do
+
+                    local crypt_passphrase=0
+                    local crypt_setup_args=""
+
+                    if [ $crypt_open -ne 0 ]; then continue; fi
+
+                    cryptKey "${caller}" "$crypt_device"
+
+                    local -l crypt_key_type=""
+                    local crypt_passphrase=0
+                    if [ "$Crypt_Key" == "" ]; then
+                        local crypt_passphrase=1
+                    else
+                        if [ -r "$Crypt_Key" ]; then
+                            local -l crypt_key_type=$(file "$Crypt_Key" | awk '{print $NF}' 2> /dev/null | egrep -e 'data|text')
+                        else
+                            local crypt_passphrase=1
+                        fi
+                    fi
+
+                    # double check
+                    if [ "$Crypt_Key" != "" ] && [ -r "$Crypt_Key" ] && [ "$crypt_key_type" == "" ]; then
+                        aborting "$Crypt_Key type is Null"
+                    fi
+
+                    if [ $crypt_passphrase -eq 1 ]; then
+                        if [ "$Crypt_Cipher" != "default" ]; then
+                            crypt_setup_args+=" --hash $Crypt_Password_Hash"
+                        fi
+                        crypt_setup_args+=" --key-file -"
+                        if [ $Setup_Flag -eq 0 ]; then
+                            crypt_setup_args+=" --verify-passphrase"
+                        fi
+                    else
+                        if [ $Crypt_Key_Size -ge 256 ]; then
+                            crypt_setup_args+=" --key-file $Crypt_Key"
+                        else
+                            if [ "$Crypt_Cipher" != "default" ]; then
+                                crypt_setup_args+=" --hash $Crypt_Password_Hash"
+                            fi
+                            crypt_setup_args+=" --key-file -"
+                        fi
+                    fi
+                    debugValue crypt_passphrase 10
+
+                    if [ "$Crypt_Cipher" != "default" ]; then
+                        crypt_setup_args+=" --cipher $Crypt_Cipher"
+                    fi
+                    crypt_setup_args+=" open --type plain $crypt_device $crypt_name"
+
+                    crypt_setup_args=$(listUnique "$crypt_setup_args")
+
+                    if [ $crypt_passphrase -eq 1 ]; then
+                        cryptEcho "${caller}" "${FUNCNAME}" "[${crypt_device}][${crypt_name}]" "opening dm-crypt, cipher $Crypt_Cipher, hash $Crypt_Password_Hash"
+                    else
+                        if [ "$Crypt_Key" != "" ]; then
+                            if [ $Crypt_Key_Size -ge 256 ]; then
+                                cryptEcho "${caller}" "${FUNCNAME}" "[${crypt_device}][${crypt_name}]" "opening dm-crypt, cipher $Crypt_Cipher, key $crypt_key_type"
+                            else
+                                cryptEcho "${caller}" "${FUNCNAME}" "[${crypt_device}][${crypt_name}]" "opening dm-crypt, cipher $Crypt_Cipher, hash $Crypt_Password_Hash, key $crypt_key_type"
+                            fi
+                        else
+                            # shouldn't happen
+                            cryptEcho "${caller}" "${FUNCNAME}" "[${crypt_device}][${crypt_name}]" "opening dm-crypt, cipher $Crypt_Cipher"
+                        fi
+                    fi
+
+                    debugValue crypt_setup_args 9
+
+                    if [ "$Crypt_Key" != "" ] && [ -r "$Crypt_Key" ] && [ "$crypt_key_type" == "text" ]; then
+                        echo -n $(cat "$Crypt_Key") | cryptsetup $crypt_setup_args
+                        Return_Code=$?
+                    else
+                        if [ $Yes_Flag -eq 0 ]; then
+                            aborting "user input required"
+                        fi
+                        if [ "$crypt_key_type" == "" ]; then echo; fi
+                        cryptsetup $crypt_setup_args
+                        Return_Code=$?
+                        if [ "$crypt_key_type" == "" ]; then echo; fi
+                    fi
+
+                    # cryptsetup error codes are:
+                    # 1 wrong parameters
+                    # 2 no permission (bad passphrase)
+                    # 3 out of memory
+                    # 4 wrong device  specified
+                    # 5 device already exists or device is busy
+
+                    if [ $Return_Code -eq 5 ] && [ -b /dev/mapper/$crypt_name ]; then
+                        # this shouldn't happen, but if it does ... (and it has)
+                        aborting "'cryptsetup $crypt_setup_args' failed ($Return_Code) [/dev/mapper/$crypt_name device already exists]"
+                    fi
+
+                    if [ $Return_Code -ne 0 ] || [ ! -b /dev/mapper/$crypt_name ]; then
+                        warning "'cryptsetup $crypt_setup_args' failed ($Return_Code)"
+                    else
+                        cryptIsMapped "${caller}" "${crypt_device}"
+                        crypt_open=$Crypt_Is_Mapped
+                        cryptIsMapped "${caller}" # reset
+                    fi
+
+                    crypt_setup_args=""
+                    unset crypt_setup_args
+
+                done
+            done
+        done
+    else
+        cryptEcho "${caller}" "${FUNCNAME}" "dm-crypt device not found"
+    fi
+
+    # end function logic
+
+    debugFunction $@
+
+}
+
+function cryptUnmount() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    local caller="$1"
+
+    if [ "${caller}" == "" ]; then
+        local caller="${FUNCNAME}"
+    fi
+
+    local crypt_devices="$2"
+
+    if [ "$crypt_devices" == "" ]; then
+        cryptDevices ${caller}
+        local crypt_devices=$Crypt_Devices
+    fi
+
+    local unmount_reason="$3"
+    if [ "$unmount_reason" == "" ]; then
+        if [ "$unmount_reason" != "" ] && [ $(echo "$unmount_reason" | grep ^\  ) == "" ]; then
+            unmount_reason=" ($unmount_reason)"
+        fi
+    fi
+
+    if [ "$crypt_devices" != "" ]; then
+
+        local crypt_device=""
+        for crypt_device in $crypt_devices; do
+            cryptName "${caller}" "${crypt_device}"
+            local crypt_name=$Crypt_Name
+            if [ "$crypt_name" == "" ]; then
+                aborting "${FUNCNAME} could not determine dm-crypt name${unmount_reason}" 1
+            fi
+
+            local crypt_device_mounts=$(findmnt -n --output TARGET "/dev/mapper/${crypt_name}" 2> /dev/null)
+
+            if [ "$crypt_device_mounts" != "" ]; then
+
+                for crypt_device_mount in $crypt_device_mounts; do
+                    umount "$crypt_device_mount" &> /dev/null
+                    Return_Code=$?
+                    if [ $Return_Code -eq 0 ]; then
+                        cryptEcho "${caller}" "${FUNCNAME}" "[${crypt_device}][${crypt_name}]" "unmounted $crypt_device_mount${unmount_reason}"
+                    else
+                        cryptEcho "${caller}" "${FUNCNAME}" "[${crypt_device}][${crypt_name}]" "unmount $crypt_device_mount failed${unmount_reason}"
+                    fi
+                done
+            else
+                debug "[${crypt_device}][${crypt_name}] no mounted filesystems${unmount_reason}" 5
+            fi
+
+            cryptClose "${caller}" "${crypt_device}" "$unmount_reason"
+        done
+    else
+        cryptEcho "${caller}" "${FUNCNAME}" "dm-crypt device not found${unmount_reason}"
+    fi
+
+    # end function logic
+
+    debugFunction $@
+
+}
+
+# Validation Logic
+
+dependency "cryptsetup date dd file find findmnt hostid lsblk mkfs.xfs readlink uuidgen xfs_admin"
+
+# optionArguments Logic
+
+# add usage help to the Apex_Usage array (before usage() is called for the first time [via optionArguments])
+
+Apex_Usage+=("-c | --cipher <value(s)>          = use the given cryptsetup cipher <value(s)>")
+Apex_Usage+=("=default --cipher=\"$Default_Ciphers\"")
+Apex_Usage+=("")
+Apex_Usage+=("-k | --key [value]               = use the given cryptsetup key file [value]")
+Apex_Usage+=("=default --key=none; passphrase")
+Apex_Usage+=("")
+Apex_Usage+=("-b | --bytes <value>             = use the given cryptsetup key file bytes <value>")
+Apex_Usage+=("=default --bytes=$Default_Key_Bytes")
+Apex_Usage+=("")
+Apex_Usage+=("-d | --device <value(s)>         = use the given device <value(s)>")
+Apex_Usage+=("=default --device=automatic")
+Apex_Usage+=("")
+# this could check /etc/crypttab, for automatic
+Apex_Usage+=("-e | --exclude <value(s)|crypttab>  = do not use the given device exclude <value(s)>")
+Apex_Usage+=("=default --exclude=none")
+Apex_Usage+=("")
+Apex_Usage+=("-n | --name <value>              = use the given dm-crypt name <value>")
+Apex_Usage+=("=default --name=automatic")
+Apex_Usage+=("")
+Apex_Usage+=("-s | --setup                     = setup --device with dm-crypt & xfs filesystem")
+Apex_Usage+=("=default --setup=interactive]")
+Apex_Usage+=("")
+Apex_Usage+=("-m | --mount                     = open & mount device(s) with cipher(s)")
+Apex_Usage+=("-r | --remount                   = close/unmount & open/mount device(s) with cipher(s)")
+Apex_Usage+=("-u | --unmount                   = unmount & close device(s)")
+
+# call the optionArguments function (to process common options, i.e. --debug, --help, --usage, --yes, etc)
+
+optionArguments $@
+
+# expand upon the base optionArguments function (careful, same named switches will be processed twice)
+
+# for each cli option (argument), evaluate them case by case, process them, and shift to the next
+
+declare -i Key_Bytes_Flag=1
+declare -i Setup_Flag=1
+declare -i Devices_Flag=1
+declare -i Excludes_Flag=1
+declare -i Key_Flag=1
+declare -i List_Flag=1
+declare -i Mount_Flag=1
+declare -i Name_Flag=1
+declare -i Remount_Flag=1
+declare -i Unmount_Flag=1
+
+declare -i Option_Arguments_Index=0
+declare -i Option_Arguments_Shift=0
+for Option_Argument in ${Option_Arguments[@]}; do
+
+    if [ $Option_Arguments_Shift -eq 1 ]; then
+        ((Option_Arguments_Index++))
+        Option_Arguments_Shift=0
+        continue
+    fi
+
+    Option_Argument_Next="${Option_Arguments[$Option_Arguments_Index+1]}"
+
+    case "$Option_Argument" in
+
+        -b | --b | --bytes | -bytes)
+            # supports only one -b with a value
+            if [ $Key_Bytes_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ] || [ "${Option_Argument_Next}" == "restart" ] || [ "${Option_Argument_Next}" == "start" ] || [ "${Option_Argument_Next}" == "status" ] || [ "${Option_Argument_Next}" == "stop" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Key_Bytes+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Key_Bytes="$(listUnique "$Key_Bytes")"
+            if [ "$Key_Bytes" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Key_Bytes_Flag=0
+            debugValue Key_Bytes_Flag 2 "$Option_Argument flag was set [$Key_Bytes]"
+            ;;
+
+        -c | --c | --cipher | -cipher | --ciphers | -ciphers)
+            # supports multiple -c values
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ] || [ "${Option_Argument_Next}" == "restart" ] || [ "${Option_Argument_Next}" == "start" ] || [ "${Option_Argument_Next}" == "status" ] || [ "${Option_Argument_Next}" == "stop" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Ciphers+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Ciphers="$(listUnique "$Ciphers")"
+            if [ "$Ciphers" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Ciphers_Flag=0
+            debugValue Ciphers_Flag 2 "$Option_Argument flag was set [$Ciphers]"
+            ;;
+
+        -d | --d | --device | -device | --devices | -devices)
+            # supports multiple -d values
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ] || [ "${Option_Argument_Next}" == "restart" ] || [ "${Option_Argument_Next}" == "start" ] || [ "${Option_Argument_Next}" == "status" ] || [ "${Option_Argument_Next}" == "stop" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Devices+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Devices="$(listUnique "$Devices")"
+            if [ "$Devices" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Devices_Flag=0
+            debugValue Devices_Flag 2 "$Option_Argument flag was set [$Devices]"
+            ;;
+
+        -e | --e | --exclude | -exclude | --excludes | -excludes)
+            # supports multiple -e values
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ] || [ "${Option_Argument_Next}" == "restart" ] || [ "${Option_Argument_Next}" == "start" ] || [ "${Option_Argument_Next}" == "status" ] || [ "${Option_Argument_Next}" == "stop" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Excludes+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Excludes="$(listUnique "$Excludes")"
+            if [ "$Excludes" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Excludes_Flag=0
+            debugValue Excludes_Flag 2 "$Option_Argument flag was set [$Excludes]"
+            ;;
+
+        -k | --k | --key | -key)
+            # supports only one -k with or without a value
+            if [ $Key_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+                    declare Key+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Key="$(listUnique "$Key")"
+            Key_Flag=0
+            debugValue Key_Flag 2 "$Option_Argument flag was set [$Key]"
+            ;;
+
+        -l | --l | --list | -list | --ls | -ls | status)
+            # supports only one -l without a value
+            if [ $List_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "$Option_Argument_Next" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+                    usage "$Option_Argument argument does not accept values"
+                fi
+            fi
+            List_Flag=0
+            debugValue List_Flag 2 "$Option_Argument flag was set"
+            ;;
+
+        -n | --n | --name | -name)
+            # supports only one -n with a value
+            if [ $Name_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ] || [ "${Option_Argument_Next}" == "restart" ] || [ "${Option_Argument_Next}" == "start" ] || [ "${Option_Argument_Next}" == "status" ] || [ "${Option_Argument_Next}" == "stop" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Name+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Name="$(listUnique "$Name")"
+            if [ "$Name" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Name_Flag=0
+            debugValue Name_Flag 2 "$Option_Argument flag was set [$Name]"
+            ;;
+
+        -m | --m | --mount | -mount | start)
+            # supports only one -m without a value
+            if [ $Mount_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "$Option_Argument_Next" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+                    usage "$Option_Argument argument does not accept values"
+                fi
+            fi
+            Mount_Flag=0
+            debugValue Mount_Flag 2 "$Option_Argument flag was set"
+            ;;
+
+        -r | --r | --remount | -remount | restart)
+            # supports only one -r without a value
+            if [ $Remount_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "$Option_Argument_Next" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+                    usage "$Option_Argument argument does not accept values"
+                fi
+            fi
+            Remount_Flag=0
+            debugValue Remount_Flag 2 "$Option_Argument flag was set"
+            ;;
+
+        -s | --s | --setup | -setup)
+            # supports only one -s without a value
+            if [ $Setup_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "$Option_Argument_Next" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+                    usage "$Option_Argument argument does not accept values"
+                fi
+            fi
+            Setup_Flag=0
+            debugValue Setup_Flag 2 "$Option_Argument flag was set"
+            ;;
+
+        -u | --u | --unmount | -unmount | --umount | -umount | stop)
+            # supports only one -u without a value
+            if [ $Unmount_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "$Option_Argument_Next" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+                    usage "$Option_Argument argument does not accept values"
+                fi
+            fi
+            Unmount_Flag=0
+            debugValue Unmount_Flag 2 "$Option_Argument flag was set"
+            ;;
+
+        *)
+            # unsupported arguments
+            if [ "$Option_Argument" != "" ]; then
+                echo "unsupported argument '$Option_Argument'"
+                apexFinish 2
+            fi
+            ;;
+    esac
+
+    ((Option_Arguments_Index++))
+done
+unset Option_Argument_Next Option_Arguments_Index Option_Arguments_Shift
+
+# if there are no arguments, or only debug is given, then echo a usage message and/or exit
+One_Of="one of --list, --mount, --remount, --setup, or --unmount"
+if [ $Apex_Arguments_Count -eq 0 ]; then usage "must specify at least $One_Of"; fi
+if [ $Apex_Arguments_Count -eq 1 ] && [ $Debug_Flag -ne 1 ]; then usage "must specify at least $One_Of"; fi
+if [ $Apex_Arguments_Count -eq 2 ] && [ $Debug_Flag -ne 1 ] && [ "$Debug" != "" ]; then usage "must specify at least $One_Of"; fi
+
+if [ $Mount_Flag -eq 0 ] && [ $Unmount_Flag -eq 0 ]; then
+    Remount_Flag=0
+fi
+
+if [ $Remount_Flag -eq 0 ]; then
+    Mount_Flag=0
+    Unmount_Flag=0
+fi
+
+# if there are conflicting flags
+if [ $List_Flag -eq 1 ]; then
+    if [ $Setup_Flag -eq 1 ] && [ $Mount_Flag -eq 1 ] && [ $Unmount_Flag -eq 1 ]; then usage "must specify at least $One_Of"; fi
+    if [ $Setup_Flag -eq 0 ] && [ $Mount_Flag -eq 0 ]; then usage "must specify only $One_Of"; fi
+    if [ $Setup_Flag -eq 0 ] && [ $Unmount_Flag -eq 0 ]; then usage "must specify only $One_Of"; fi
+fi
+
+# Main Logic
+
+if [ "$Uniq" == "" ]; then Uniq=$(date +%Y%m%d)-$(uuidgen); fi # important!
+
+apexStart
+
+cryptInit
+
+if [ $Setup_Flag -eq 0 ]; then
+    cryptMount cryptSetup
+fi
+
+if [ $Unmount_Flag -eq 0 ]; then
+    cryptUnmount
+fi
+
+if [ $Mount_Flag -eq 0 ]; then
+    cryptMount
+fi
+
+if [ $List_Flag -eq 0 ]; then
+    cryptList
+fi
+
+apexFinish $Return_Code
+
+
+
+
+

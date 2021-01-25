@@ -1,0 +1,1245 @@
+#!/bin/bash
+
+# This script will ... create branches & tag & optionally deploy with base svn
+
+# 20160831, jtingiris
+# 20170321, cmagargle, added slack post
+
+# todo
+# make the slack stuff cli args
+
+# For coding conventions, organization, standards, & references, see: /base/README
+
+BASE_BASH=/base/include/base.bash.include
+if [ ! -r "$BASE_BASH" ]; then echo "$BASE_BASH file not found"; exit; fi
+source "$BASE_BASH"
+
+# GLOBAL_VARIABLES
+
+COPY_ID_MAX=15
+
+DEFAULT_TRAC_URL="http://trac.base8tech.com/browser"
+DEFAULT_EMAILS="root@dev.base8tech.com" # space or comma separated list
+DEFAULT_SLACK_CHANNELS="#btl"
+DEFAULT_SLACK_URL="https://hooks.slack.com/services/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"
+
+# derive prefix from the name of the script, e.g. base-release or base-build
+NAME_PREFIX=$(echo "$BASE_NAME" | awk -F- '{print $2}')
+if [ "$NAME_PREFIX" == "" ] || [ "$NAME_PREFIX" == "$BASE_NAME" ]; then
+    NAME_PREFIX="release"
+fi
+
+# explicit declarations
+
+declare -x DEFAULT_DATE=$(date +%Y%m%d)
+
+declare -i BRANCH_FLAG=0
+declare -i COPY_FLAG=0
+declare -i DIRECTORY_FLAG=0
+declare -i EMAILS_FLAG=0
+declare -i FAIL_FLAG=0
+declare -i LIST_FLAG=0
+declare -i MERGE_FLAG=0
+declare -i NAME_FLAG=0
+declare -i NAME_PREFIX_FLAG=0
+declare -i QUIET_FLAG=0
+declare -i SWITCH_FLAG=0
+declare -i TAG_FLAG=0
+declare -i TEST_FLAG=0
+declare -i TICKETS_FLAG=0
+declare -i UPDATE_FLAG=0
+declare -i YES_FLAG=0
+
+declare -x VERSION="0.1";
+
+# Function_Names
+
+function _Init() {
+    Debug_Function $@
+
+    # begin function logic
+
+    if [ "$HERE" == "" ]; then
+        HERE=$(pwd)
+    fi
+    Debug_Variable HERE 10
+
+    if [ "$ACCOUNT" == "" ]; then
+        ACCOUNT="$BASE_ACCOUNT"
+        if [ "$ACCOUNT" == "" ]; then
+            ACCOUNT="base"
+        fi
+    fi
+    Debug_Variable ACCOUNT 10
+
+    if [ "$DIRECTORY" == "" ]; then
+        DIRECTORY=$(pwd -P)
+    fi
+    if [ ! -d "$DIRECTORY" ]; then
+        Aborting "$DIRECTORY directory not found" 1
+    else
+        cd "$DIRECTORY"
+        if [ $? -ne 0 ]; then
+            Aborting "can not cd to $DIRECTORY (permissions?)"
+        fi
+    fi
+    Debug_Variable DIRECTORY 10
+
+    if [ "$EMAILS" == "" ]; then
+        EMAILS="$DEFAULT_EMAILS"
+    fi
+    Debug_Variable EMAILS 10
+    #Get slackchannel svn properties
+    SVN_SLACK_CHANNELS=$(svn propget slackchannel ${HERE})
+
+    if [ "$SVN_SLACK_CHANNELS" == "" ]; then
+        SLACK_CHANNELS="$DEFAULT_SLACK_CHANNELS"
+    else
+        SLACK_CHANNELS=$SVN_SLACK_CHANNELS
+    fi
+
+    if [ "$SLACK_CHANNELS" == "" ]; then
+        SLACK_CHANNELS="$DEFAULT_SLACK_CHANNELS"
+    fi
+    Debug_Variable SLACK_CHANNELS 10
+
+    if [ "$RCS_URL" == "" ]; then
+        RCS=svn
+        RCS_URL=$($RCS info 2> /dev/null | grep URL: | awk -FURL: '{print $NF}')
+        if [ "$RCS_URL" == "" ]; then
+            # git config --get remote.origin.url OR git remote show origin
+            RCS=git
+            RCS_URL=$($RCS remote show origin 2> /dev/null | grep Fetch\ URL: | awk -FURL: '{print $NF}')
+            RCS_NOTIFY_EMAIL=""
+        else
+            RCS_NOTIFY_EMAIL=$($RCS propget notify_email .)
+        fi
+    fi
+    if [ "$RCS_URL" == "" ]; then
+        Aborting "$DIRECTORY failed revision control check" 1
+    fi
+    RCS_URL=$(List_Unique "$RCS_URL" | sed -e 's#/@$#/@@#g')
+    Debug_Variable RCS 10
+    Debug_Variable RCS_URL 10
+
+    DIRECTORY_URL=$($RCS info "${DIRECTORY}" 2> /dev/null | grep URL: | awk -FURL: '{print $NF}')
+    DIRECTORY_URL=$(List_Unique "$DIRECTORY_URL" | sed -e 's#/@$#/@@#g')
+    if [ "$DIRECTORY_URL" == "" ]; then
+        Aborting "${DIRECTORY} URL not found"
+    fi
+    Debug_Variable DIRECTORY_URL 10
+
+    # this has to be after RCS_URL
+    if [ "$NOTIFY_EMAILS" == "" ]; then
+        NOTIFY_EMAILS=$(echo "$EMAILS $RCS_NOTIFY_EMAIL" | sed -e '/,/s// /g')
+    fi
+    NOTIFY_EMAILS=$(List_Unique "$NOTIFY_EMAILS")
+    Debug_Variable NOTIFY_EMAILS 10
+
+    if [ "$RCS_URL_REPO_URI" == "" ]; then
+        RCS_URL_REPO_URI=$(echo "$RCS_URL" | awk -Frepo '{print $NF}' | grep ^\/)
+    fi
+    Debug_Variable RCS_URL_REPO_URI 10
+
+    if [ "$RCS_TRUNK_URL" == "" ]; then
+        RCS_TRUNK_URL=$(svntrunk | sed -e 's#/@$#/@@#g')
+        if [ "$RCS_TRUNK_URL" == "" ]; then
+            Debug "RCS_TRUNK_URL is empty" 10
+
+            RCS_TRUNK_URL=$(svntrunk | sed -e 's#/@$#/@@#g')
+            if [ "$RCS_TRUNK_URL" == "" ] || [ $? -ne 0 ]; then
+                Aborting "invalid trunk url" 1
+            fi
+        fi
+    fi
+    Debug_Variable RCS_TRUNK_URL 10
+
+    if [ "$RCS_TRUNK_URL_REPO_URI" == "" ]; then
+        RCS_TRUNK_URL_REPO_URI=$(echo "$RCS_TRUNK_URL" | awk -Frepo '{print $NF}' | grep ^\/)
+    fi
+    Debug_Variable RCS_TRUNK_URL_REPO_URI 1
+
+    if [ "$RCS_BRANCH_URL" == "" ]; then
+        RCS_BRANCH_URL=$(echo "$RCS_TRUNK_URL" | sed -e "s#/tags/#/branches/#g" -e 's#/tags$#/branches#g' -e "s#/trunk/#/branches/#g" -e 's#/trunk$#/branches#g' -e 's#/@$#/@@#g' | egrep -e "/branches/|/branches$")
+    fi
+    Debug_Variable RCS_BRANCH_URL 10
+
+    if [ "$RCS_TAG_URL" == "" ]; then
+        RCS_TAG_URL=$(echo "$RCS_TRUNK_URL" | sed -e "s#/branches/#/tags/#g" -e 's#/branches$#/tags#g' -e "s#/trunk/#/tags/#g" -e 's#/trunk$#/tags#g' -e 's#/@$#/@@#g' | egrep -e "/tags/|/tags$")
+    fi
+    Debug_Variable RCS_TAG_URL 10
+
+    if [ "$RELEASE_DATE" == "" ]; then
+        export WEEKDAY=$(date +%a)
+        export RELEASE_WEEKDAY="Wed"
+        if [ "$WEEKDAY" == "$RELEASE_WEEKDAY" ]; then
+            export RELEASE_DATE=$(date +%Y%m%d)
+        else
+            export RELEASE_DATE=$(date --date="next $RELEASE_WEEKDAY" +%Y%m%d)
+        fi
+    fi
+    Debug_Variable RELEASE_DATE 10
+
+    if [ "$RCS_NAME" == "" ]; then
+
+        if [ "$NAME" != "" ]; then
+            # custom name was given
+            RCS_NAME="$NAME"
+            if [ $NAME_PREFIX_FLAG -eq 1 ]; then
+                RCS_NAME="${NAME_PREFIX}-${RCS_NAME}"
+            fi
+        else
+            # automatically use a $NAME_PREFIX name
+            if [ $NAME_PREFIX_FLAG -eq 1 ]; then
+                RCS_NAME="${NAME_PREFIX}-${RELEASE_DATE}"
+            else
+                RCS_NAME="${WHO}-$(date +%Y%m%d)"
+            fi
+        fi
+
+    fi
+    RCS_NAME=$(echo "${RCS_NAME}" | sed -e "s#${NAME_PREFIX}-${NAME_PREFIX}-#${NAME_PREFIX}-#g")
+    Debug_Variable RCS_NAME 10
+
+    if ([ $NAME_FLAG -eq 1 ] || [ $NAME_PREFIX_FLAG -eq 1 ]) && [ $BRANCH_FLAG -eq 0 ] && [ $TAG_FLAG -eq 0 ]; then
+        BRANCH_FLAG=1
+    fi
+
+    RCS_TYPE=""
+    if [ $NAME_PREFIX_FLAG -eq 1 ]; then
+        RCS_TYPE+=" $NAME_PREFIX"
+    fi
+    if [ $COPY_FLAG -eq 1 ]; then
+        RCS_TYPE+=" copy"
+    fi
+    if [ $BRANCH_FLAG -eq 1 ]; then
+        RCS_TYPE+=" branch"
+    fi
+    if [ $TAG_FLAG -eq 1 ]; then
+        RCS_TYPE+=" tag"
+    fi
+    if [ $LIST_FLAG -eq 1 ]; then
+        RCS_TYPE+=" list"
+    fi
+    if [ $MERGE_FLAG -eq 1 ]; then
+        RCS_TYPE+=" merge"
+    fi
+    RCS_TYPE=$(List_Unique "$RCS_TYPE")
+    Debug_Variable RCS_TYPE 10
+
+    if [ "$TRAC_TRUNK_URL" == "" ]; then
+        if [ "$RCS_URL_REPO_URI" != "" ]; then
+            TRAC_TRUNK_URL="${DEFAULT_TRAC_URL}$RCS_URL_REPO_URI"
+        else
+            TRAC_TRUNK_URL="$DEFAULT_TRAC_URL"
+        fi
+    fi
+    TRAC_TRUNK_URL=$(echo "$TRAC_TRUNK_URL" | sed -e 's#@@#@#g')
+    Debug_Variable TRAC_TRUNK_URL 10
+
+    local globals=(
+        ACCOUNT
+        DIRECTORY
+        BASE_ENVIRONMENT
+        BASE_DIR
+        HERE
+        NOTIFY_EMAILS
+        RCS
+        RCS_TRUNK_URL
+        RCS_TRUNK_URL_REPO_URI
+        RCS_BRANCH_URL
+        RCS_TAG_URL
+        RCS_TYPE
+        RCS_URL
+        RCS_URL_REPO_URI
+        RELEASE_DATE
+        NAME_PREFIX
+    )
+
+    for global in ${globals[@]}; do
+        if [ "${!global}" == "" ]; then
+            Aborting "$global is NULL" 2
+        else
+            Debug_Variable $global 17 "${!global}"
+        fi
+    done
+
+    # end function logic
+
+    Debug_Function $@
+}
+
+function Svn_Copy() {
+    Debug_Function $@
+
+    # begin function logic
+
+    _Init
+
+    if [ "$RCS_TYPE" == "" ]; then
+        Aborting "can not determine what type of copy to make"
+    fi
+    echo "RCS_TYPE                  = $RCS_TYPE" | tee -a $TMPFILE
+
+    # create the necessary trunk heirachy
+    if [ "$(Svn_Ls "$RCS_TRUNK_URL" | head -1)" == "1" ]; then
+        Svn_Mkdir "$RCS_TRUNK_URL"
+    fi
+
+    # create the necessary branch heirachy
+    if [ "$(Svn_Ls "$RCS_BRANCH_URL" | head -1)" == "1" ]; then
+        if [ $BRANCH_FLAG -eq 1 ] || [ $NAME_PREFIX_FLAG -eq 1 ]; then
+            Svn_Mkdir "$RCS_BRANCH_URL"
+        fi
+    fi
+
+    # create the necessary tag heirachy
+    if [ "$(Svn_Ls "$RCS_TAG_URL" | head -1)" == "1" ]; then
+        if [ $TAG_FLAG -eq 1 ]; then
+            Svn_Mkdir "$RCS_TAG_URL"
+        fi
+    fi
+
+    if [ $NAME_PREFIX_FLAG -eq 1 ] && [ "$RELEASE_DATE" != "" ]; then
+        echo "RELEASE_DATE              = $RELEASE_DATE" | tee -a $TMPFILE
+    fi
+
+    COPY_NAME=$RCS_NAME
+
+    if [ $NAME_FLAG -eq 0 ]; then
+        Debug "Automatic; NAME_FLAG=0" 6
+
+        COPY_BRANCH_URL_COUNTER=1
+        COPY_BRANCH_ID=${RCS_NAME}-${COPY_BRANCH_URL_COUNTER}
+        COPY_BRANCH_URL=${RCS_BRANCH_URL}/${COPY_BRANCH_ID}
+        COPY_BRANCH_URL=$(echo "$COPY_BRANCH_URL" | sed -e 's#/@@/#/@/#g')
+
+        Debug_Variable COPY_BRANCH_URL 9
+
+        if [ $BRANCH_FLAG -eq 0 ] && [ $TAG_FLAG -eq 0 ]; then
+            Question "create new ${NAME_PREFIX} branch $COPY_BRANCH_URL"
+            if [ "$QUESTION_FLAG" -eq 1 ]; then
+                BRANCH_FLAG=1
+            fi
+        fi
+
+        if [ $BRANCH_FLAG -eq 1 ]; then
+            while [ "$(Svn_Ls "$COPY_BRANCH_URL" | head -1)" == "0" ]; do
+                let COPY_BRANCH_URL_COUNTER=$COPY_BRANCH_URL_COUNTER+1
+                if [ $COPY_BRANCH_URL_COUNTER -gt $COPY_ID_MAX ]; then
+                    Aborting "maximum branch copy ids for $DIRECTORY has been reached ($COPY_ID_MAX)" 3
+                fi
+                COPY_BRANCH_ID_LAST=$COPY_BRANCH_ID
+                COPY_BRANCH_ID=${RCS_NAME}-${COPY_BRANCH_URL_COUNTER}
+                COPY_BRANCH_URL=${RCS_BRANCH_URL}/${COPY_BRANCH_ID}
+                COPY_BRANCH_URL=$(echo "$COPY_BRANCH_URL" | sed -e 's#/@@/#/@/#g')
+            done
+            Debug_Variable COPY_BRANCH_ID_LAST 15 automatic
+
+        fi
+
+        COPY_TAG_URL_COUNTER=1
+        COPY_TAG_ID=${RCS_NAME}-${COPY_TAG_URL_COUNTER}
+        COPY_TAG_URL=${RCS_TAG_URL}/${COPY_TAG_ID}
+        COPY_TAG_URL=$(echo "$COPY_TAG_URL" | sed -e 's#/@@/#/@/#g')
+        Debug_Variable COPY_TAG_URL 5 automatic
+
+        if [ $BRANCH_FLAG -eq 0 ] && [ $TAG_FLAG -eq 0 ]; then
+            Question "create new ${NAME_PREFIX} tag $COPY_TAG_URL"
+            if [ "$QUESTION_FLAG" -eq 1 ]; then
+                TAG_FLAG=1
+            fi
+        fi
+
+        if [ $TAG_FLAG -eq 1 ]; then
+            while [ "$(Svn_Ls "$COPY_TAG_URL" | head -1)" == "0" ]; do
+                let COPY_TAG_URL_COUNTER=$COPY_TAG_URL_COUNTER+1
+                if [ $COPY_TAG_URL_COUNTER -gt $COPY_ID_MAX ]; then
+                    Aborting "maximum tag copy ids for $DIRECTORY has been reached ($COPY_ID_MAX)" 3
+                fi
+                COPY_TAG_ID_LAST=$COPY_TAG_ID
+                COPY_TAG_ID=${RCS_NAME}-${COPY_TAG_URL_COUNTER}
+                COPY_TAG_URL=${RCS_TAG_URL}/${COPY_TAG_ID}
+                COPY_TAG_URL=$(echo "$COPY_TAG_URL" | sed -e 's#/@@/#/@/#g')
+                Debug_Variable COPY_TAG_URL 15 $COPY_TAG_URL_COUNTER automatic
+            done
+            Debug_Variable COPY_TAG_ID_LAST 15 automatic
+
+        fi
+
+        # for now, if the switch flag is used always switch to the 'latest' URLs
+        if [ $SWITCH_FLAG -eq 1 ]; then
+            COPY_BRANCH_URL=${RCS_BRANCH_URL}/${COPY_BRANCH_ID_LAST}
+            COPY_BRANCH_URL=$(echo "$COPY_BRANCH_URL" | sed -e 's#/@@/#/@/#g')
+            COPY_TAG_URL=${RCS_TAG_URL}/${COPY_TAG_ID_LAST}
+            COPY_TAG_URL=$(echo "$COPY_TAG_URL" | sed -e 's#/@@/#/@/#g')
+        fi
+
+        if [ $COPY_BRANCH_URL_COUNTER -ne $COPY_TAG_URL_COUNTER ] && [ $BRANCH_FLAG -eq 1 ] && [ $TAG_FLAG -eq 1 ]; then
+            Debug_Variable COPY_BRANCH_URL_COUNTER 9 automatic
+            Debug_Variable COPY_TAG_URL_COUNTER 9 automatic
+
+            # attempt to resync them at the greatest id
+            if [ $COPY_TAG_URL_COUNTER -gt $COPY_BRANCH_URL_COUNTER ]; then
+                COPY_BRANCH_URL_COUNTER=$COPY_TAG_URL_COUNTER
+            fi
+            COPY_BRANCH_ID=${RCS_NAME}-${COPY_BRANCH_URL_COUNTER}
+            COPY_BRANCH_URL=${RCS_BRANCH_URL}/${COPY_BRANCH_ID}
+            COPY_BRANCH_URL=$(echo "$COPY_BRANCH_URL" | sed -e 's#/@@/#/@/#g')
+
+            if [ $COPY_BRANCH_URL_COUNTER -gt $COPY_TAG_URL_COUNTER ]; then
+                COPY_TAG_URL_COUNTER=$COPY_BRANCH_URL_COUNTER
+            fi
+            COPY_TAG_ID=${RCS_NAME}-${COPY_TAG_URL_COUNTER}
+            COPY_TAG_URL=${RCS_TAG_URL}/${COPY_TAG_ID}
+            COPY_TAG_URL=$(echo "$COPY_TAG_URL" | sed -e 's#/@@/#/@/#g')
+
+            # not finished
+            if [ "$COPY_BRANCH_URL_COUNTER" != "$COPY_TAG_URL_COUNTER" ]; then
+                Aborting "branch $COPY_BRANCH_URL_COUNTER and tag $COPY_TAG_URL_COUNTER are out of sync; the logic to handle this is not implemented" 3
+            fi
+        else
+            COPY_NAME+="-${COPY_BRANCH_URL_COUNTER}"
+            echo "COPY_NAME                 = $COPY_NAME" | tee -a $TMPFILE
+        fi
+
+    else
+
+        Debug "Manual; NAME_PREFIX_FLAG -ne 0" 6
+
+        COPY_BRANCH_ID=$RCS_NAME
+        COPY_BRANCH_URL=${RCS_BRANCH_URL}/${COPY_BRANCH_ID}
+        COPY_BRANCH_URL=$(echo "$COPY_BRANCH_URL" | sed -e 's#/@@/#/@/#g')
+
+        COPY_TAG_ID=$RCS_NAME
+        COPY_TAG_URL=${RCS_TAG_URL}/${COPY_TAG_ID}
+        COPY_TAG_URL=$(echo "$COPY_TAG_URL" | sed -e 's#/@@/#/@/#g')
+
+        if [ $NAME_PREFIX_FLAG -eq 0 ] && [ $BRANCH_FLAG -eq 0 ] && [ $TAG_FLAG -eq 0 ]; then
+            Question "create new branch $COPY_BRANCH_URL"
+            if [ "$QUESTION_FLAG" -eq 1 ]; then
+                BRANCH_FLAG=1
+            fi
+        fi
+
+        if [ $NAME_PREFIX_FLAG -eq 0 ] && [ $BRANCH_FLAG -eq 0 ] && [ $TAG_FLAG -eq 0 ]; then
+            Question "create new tag $COPY_TAG_URL"
+            if [ "$QUESTION_FLAG" -eq 1 ]; then
+                TAG_FLAG=1
+            fi
+        fi
+
+    fi
+
+    Debug_Variable COPY_BRANCH_URL 10
+    Debug_Variable COPY_TAG_URL 10
+
+    if [ $BRANCH_FLAG -eq 1 ]; then
+
+        COPY_BRANCH_ID=$(echo "${COPY_BRANCH_ID}" | sed -e "s#${NAME_PREFIX}-${NAME_PREFIX}-#${NAME_PREFIX}-#g")
+        COPY_BRANCH_URL=$(echo "${COPY_BRANCH_URL}" | sed -e "s#${NAME_PREFIX}-${NAME_PREFIX}-#${NAME_PREFIX}-#g")
+        COPY_BRANCH_URL=$(echo "$COPY_BRANCH_URL" | sed -e 's#/@@/#/@/#g')
+
+        echo "COPY_BRANCH_ID            = $COPY_BRANCH_ID" | tee -a $TMPFILE
+        echo "COPY_BRANCH_URL           = $COPY_BRANCH_URL" | tee -a $TMPFILE
+
+        COPY_BRANCH_URL_REPO_URI=$(echo "$COPY_BRANCH_URL" | awk -Frepo '{print $NF}' | grep ^\/)
+        Debug_Variable COPY_BRANCH_URL_REPO_URI 10
+
+        if [ $TEST_FLAG -eq 1 ]; then
+            echo svn copy "${RCS_URL}" "${COPY_BRANCH_URL}" -m "branched $COPY_BRANCH_ID from $HOSTNAME:$DIRECTORY" \
+                | tee -a $TMPFILE
+        else
+            svn copy "${RCS_URL}" "${COPY_BRANCH_URL}" -m "branched $COPY_BRANCH_ID from $HOSTNAME:$DIRECTORY" \
+                &> /dev/null
+            if [ $? -ne 0 ]; then
+                Aborting "svn copy branch failed for $COPY_BRANCH_URL" 3
+            fi
+        fi
+    fi
+
+    if [ $TAG_FLAG -eq 1 ]; then
+
+        COPY_TAG_ID=$(echo "${COPY_TAG_ID}" | sed -e "s#${NAME_PREFIX}-${NAME_PREFIX}-#${NAME_PREFIX}-#g")
+        COPY_TAG_URL=$(echo "${COPY_TAG_URL}" | sed -e "s#${NAME_PREFIX}-${NAME_PREFIX}-#${NAME_PREFIX}-#g")
+        COPY_TAG_URL=$(echo "$COPY_TAG_URL" | sed -e 's#/@@/#/@/#g')
+
+        echo "COPY_TAG_ID               = $COPY_TAG_ID" | tee -a $TMPFILE
+        echo "COPY_TAG_URL              = $COPY_TAG_URL" | tee -a $TMPFILE
+
+        COPY_TAG_URL_REPO_URI=$(echo "$COPY_TAG_URL" | awk -Frepo '{print $NF}' | grep ^\/)
+        Debug_Variable COPY_TAG_URL_REPO_URI 10
+
+        if [ $TEST_FLAG -eq 1 ]; then
+            echo svn copy "$RCS_URL" "$COPY_TAG_URL" -m "tagged $COPY_TAG_ID from $HOSTNAME:$DIRECTORY" \
+                | tee -a $TMPFILE
+        else
+            svn copy "$RCS_URL" "$COPY_TAG_URL" -m "tagged $COPY_TAG_ID from $HOSTNAME:$DIRECTORY" \
+                &> /dev/null
+            if [ $? -ne 0 ]; then
+                Aborting "svn copy tag failed for $COPY_BRANCH_URL" 3
+            fi
+        fi
+    fi
+
+    echo
+
+    # end function logic
+
+    Debug_Function $@
+}
+
+function Svn_Ls() {
+    Debug_Function $@
+
+    # begin function logic
+
+    local svn_url="$1"
+
+    if [ "svn_url" == "" ]; then return; fi
+
+    svn ls "${svn_url}" &> /dev/null
+    if [ $? -ne 0 ]; then
+        echo 1
+        Debug_Variable svn_url 10 "FAILED"
+    else
+        echo 0
+        Debug_Variable svn_url 10 "OK"
+    fi
+
+    # end function logic
+
+    Debug_Function $@
+}
+
+function Svn_List() {
+    Debug_Function $@
+
+    # begin function logic
+
+    if [ "$RCS_BRANCH_URL" != "" ]; then
+        Debug_Variable RCS_BRANCH_URL 3
+
+        if [ "$LIST" == "" ]; then
+            if [ "$NAME" != "" ]; then
+                local list="$NAME"
+            else
+                local list="."
+            fi
+        else
+            local list="$LIST"
+        fi
+        Debug_Variable list 3
+
+        local branch_prefixes=()
+        while read branch_prefix; do
+            Debug_Variable branch_prefix 3
+            if [ "$branch_prefix" == "" ]; then continue; fi
+            branch_prefixes+=($branch_prefix)
+        done <<< "$(svn ls --verbose "${RCS_BRANCH_URL}" 2> /dev/null \
+                | sort -n \
+                | grep "$list" \
+                | egrep -ve ' \./$' \
+                | tail -$COPY_ID_MAX \
+                | sed -e 's#/$##g' \
+                | awk '{print $1"###"$2"###"$3"###"$4"###"$5"###"$NF}'
+        )"
+
+        if [ "$branch_prefixes" != "" ]; then
+            if [ "$TRAC_TRUNK_URL" != "" ]; then
+                echo "TRAC_TRUNK_URL            = $TRAC_TRUNK_URL"
+            fi
+            echo
+            echo -n Most recently copied $COPY_ID_MAX branches in $RCS_BRANCH_URL
+            if [ "$list" != "" ] && [ "$list" != "." ]; then
+                echo " matching '$list'"
+            else
+                echo
+            fi
+            echo
+            for branch_prefix in ${branch_prefixes[@]}; do
+                branch_revision=$(echo "$branch_prefix" | awk -F### '{print $1}')
+                branch_user=$(echo "$branch_prefix" | awk -F### '{print $2}')
+                branch_date=$(echo "$branch_prefix" | awk -F### '{print $3" "$4" "$5}')
+                branch_name=$(echo "$branch_prefix" | awk -F### '{print $6}')
+                branch_url=$(echo "$RCS_BRANCH_URL/$branch_name" | sed -e 's#/@@/#/@/#g')
+                echo "$branch_url by $branch_user on $branch_date"
+            done
+        fi
+
+        if [ $? -ne 0 ]; then
+            Debug_Variable svn_url 10 "FAILED"
+        else
+            Debug_Variable svn_url 10 "OK"
+        fi
+    else
+        echo
+        echo branch url is empty
+        echo
+    fi
+
+    # end function logic
+
+    Debug_Function $@
+}
+
+function Svn_Merge() {
+    Debug_Function $@
+
+    # begin function logic
+
+    _Init
+
+    if [ "$RCS_TYPE" != "branch merge" ]; then
+        Aborting "will only merge branch, not $RCS_TYPE"
+    fi
+    echo "RCS_TYPE                  = $RCS_TYPE" | tee -a $TMPFILE
+
+    if [ "$RCS_BRANCH_URL" == "" ]; then
+        echo
+        Aborting "branch url is empty"
+        echo
+    else
+        Debug_Variable RCS_BRANCH_URL 3
+
+        WORKING_DIRECTORY_BRANCH=$(echo "$DIRECTORY_URL" | grep \/branches\/)
+        WORKING_DIRECTORY_TAG=$(echo "$DIRECTORY_URL" | grep \/tags\/)
+        WORKING_DIRECTORY_TRUNK=$(echo "$DIRECTORY_URL" | grep \/trunk\/)
+
+        local -l merge=$MERGE
+        local merge_arguments=""
+        local svn_commit_flag=0
+        local svn_warning_flag=0
+
+        if [ "$merge" == "reintegrate" ]; then
+            merge_arguments+=" --reintegrate"
+        fi
+        Debug_Variable merge 3 "$merge_arguments"
+
+        if [ "$NAME" == "" ]; then
+            FAIL_FLAG=1
+            echo
+            echo name is empty
+            echo
+        else
+            MERGE_BRANCH_URL=${RCS_BRANCH_URL}/${NAME}
+            MERGE_BRANCH_URL=$(echo "$MERGE_BRANCH_URL" | sed -e 's#/@@/#/@/#g' -e 's#/*$##g')
+            MERGE_BRANCH_URL_REPO_URI=$(echo "$MERGE_BRANCH_URL" | awk -Frepo '{print $NF}' | grep ^\/)
+
+            if [ "$MERGE_BRANCH_URL" == "$RCS_BRANCH_URL" ]; then
+                Aborting "will not merge identical URLs"
+            fi
+
+            Debug_Variable MERGE_BRANCH_URL 3 "$MERGE_BRANCH_URL_REPO_URI"
+
+            svn ls "${MERGE_BRANCH_URL}" &> /dev/null
+            RC=$?
+            if [ $RC -ne 0 ]; then
+                Aborting "invalid svn merge URL ${MERGE_BRANCH_URL}" 1
+            else
+                if [ "$MERGE_BRANCH_URL_REPO_URI" != "" ] && [ "$DEFAULT_TRAC_URL" != "" ]; then
+                    TRAC_BRANCH_URL="${DEFAULT_TRAC_URL}$MERGE_BRANCH_URL_REPO_URI"
+                    TRAC_BRANCH_URL=$(echo "$TRAC_BRANCH_URL" | sed -e 's#@@#@#g')
+                fi
+            fi
+
+            local commit_description=""
+            if [ "$TICKETS" != "" ]; then
+                commit_description+="see"
+                for ticket in $TICKETS; do
+                    ticket="${ticket#*#}"
+                    commit_description+=" #$ticket"
+                done
+                commit_description+="; "
+            fi
+            unset ticket
+
+            if [ "$TRAC_BRANCH_URL" != "" ]; then
+                commit_description+="$TRAC_BRANCH_URL "
+            else
+                commit_description+="$MERGE_BRANCH_URL "
+            fi
+
+            if [ "$WORKING_DIRECTORY_TRUNK" != "" ]; then
+                if [ "$merge" == "" ] || [ "$merge" == "reintegrate" ]; then
+                    echo
+                    svn up "${DIRECTORY}" &> /dev/null
+                    svn merge$merge_arguments "${MERGE_BRANCH_URL}" "${DIRECTORY}"
+                    RC=$?
+                    if [ $RC -ne 0 ]; then
+                        Aborting "svn merge${merge_arguments} "${MERGE_BRANCH_URL}" "${DIRECTORY}" failed (RC=$RC)"
+                    fi
+
+                    Question "svn commit ${DIRECTORY} to $DIRECTORY_URL"
+                    if [ "$QUESTION_FLAG" -eq 1 ]; then
+                        commit_description+="commit merge${merge_arguments} to $DIRECTORY_URL from $HOSTNAME:$DIRECTORY"
+                        Debug_Variable commit_description 3
+
+                        svn up "${DIRECTORY}" &> /dev/null
+                        RC=$?
+                        if [ $RC -ne 0 ]; then
+                            Aborting "svn up '${DIRECTORY}' failed (RC=$RC)"
+                        fi
+
+                        svn commit "${DIRECTORY}" -m "$commit_description" &> /dev/null
+                        RC=$?
+                        if [ $RC -ne 0 ]; then
+                            Aborting "svn commit '${DIRECTORY}' -m '$commit_description' failed (RC=$RC)"
+                        fi
+
+                        svn_commit_flag=1
+                    else
+                        Warning "merge completed successfully but not committed"
+                        svn_warning_flag=1
+                    fi
+                fi
+
+            else
+                Warning "working directory '$DIRECTORY' not trunk ($DIRECTORY_URL)"
+                svn_warning_flag=1
+            fi
+
+            if [ "$merge" == "recreate" ] || [ "$merge" == "reintegrate" ]; then
+                local svn_stat=$(svn stat 2>&1 | grep -v \?)
+                if [ "$svn_stat" != "" ]; then
+                    svn_warning_flag=1
+                fi
+
+                if [ $svn_warning_flag -ne 0 ]; then
+                    Question "proceed despite warnings"
+                    if [ "$QUESTION_FLAG" -eq 1 ]; then
+                        svn_warning_flag=0
+                    fi
+                fi
+
+                if [ $svn_warning_flag -eq 0 ]; then
+                    local commit_description="${merge}d ${commit_description}"
+                    Debug_Variable commit_description 3
+
+                    Question "recreate $MERGE_BRANCH_URL from $RCS_TRUNK_URL"
+                    if [ "$QUESTION_FLAG" -eq 1 ]; then
+                        svn rm "${MERGE_BRANCH_URL}" -m "${commit_description}" &> /dev/null
+                        RC=$?
+                        if [ $RC -ne 0 ]; then
+                            Aborting "svn rm '${MERGE_BRANCH_URL}' -m '${commit_description}' failed (RC=$RC)"
+                        fi
+                        svn copy "$RCS_TRUNK_URL" "${MERGE_BRANCH_URL}" -m "${commit_description}" &> /dev/null
+                        RC=$?
+                        if [ $RC -ne 0 ]; then
+                            Aborting "svn cp '$RCS_TRUNK_URL' '${MERGE_BRANCH_URL}' -m '${commit_description}' failed (RC=$RC)"
+                        fi
+                    fi
+                fi
+            fi
+        fi
+
+    fi
+
+    # end function logic
+
+    Debug_Function $@
+}
+
+function Svn_Mkdir() {
+    Debug_Function $@
+
+    # begin function logic
+
+    local svn_url="$1"
+
+    if [ "svn_url" == "" ]; then return; fi
+
+    if [ $COPY_FLAG -eq 1 ]; then
+        Question "svn mkdir $svn_url"
+        if [ "$QUESTION_FLAG" -eq 1 ]; then
+            if [ $TEST_FLAG -eq 1 ]; then
+                echo svn mkdir --parents "$svn_url" -m "created ${NAME_PREFIX} directory $DIRECTORY" \
+                    | tee -a $TMPFILE
+            else
+                svn mkdir --parents "$svn_url" -m "created ${NAME_PREFIX} directory $DIRECTORY" \
+                    &> /dev/null
+                if [ $? -ne 0 ]; then
+                    Aborting "svn mkdir failed for $svn_url" 3
+                fi
+            fi
+        fi
+    fi
+
+    # end function logic
+
+    Debug_Function $@
+}
+
+function Usage() {
+    Debug_Function $@
+
+    local note="$1"
+
+
+    # begin function logic
+
+    echo
+    echo "usage: $0 <options>"
+    echo
+    echo "options:"
+    echo
+
+    local flags_padding=30
+    usages=()
+
+    # these are handled in base.bash; useful to know though ...
+    usages+=( "-D | --debug [level] = print debug messages (less than) [level]")
+    usages+=( "-H | --help = print this message")
+    usages+=( "-V | --version = print version")
+    usages+=("")
+    # these must be handled in this script; please keep usage messages accurate
+    usages+=( "-c | --create | --copy = create copy branch, tag, and/or ${NAME_PREFIX} --name <value> from --directory <value>")
+    usages+=( "-m | --merge [recreate|reintegrate] = merge branch --name <value> to --directory <value> and optionally reintegrate and/or recreate")
+    usages+=("")
+    usages+=( "-l | --list [regex] = list branch, tag, & ${NAME_PREFIX} copies of --directory <value>, optionally with id matching [regex]")
+    usages+=("")
+    usages+=( "-d | --directory <value> = specify branch, tag, & ${NAME_PREFIX} to --create, --merge, or --list from --directory <value> (default=pwd)")
+    usages+=( "-n | --name <value> = specify branch, tag, & ${NAME_PREFIX} to --create, --merge, or --list with --name <value> (default=automatic ${NAME_PREFIX} name)")
+    usages+=( "-# | --ticket <value> = specify ticket #(s) (default=none)")
+    usages+=("")
+    usages+=( "-b | --branch = specify to --create or --merge a branch with --name <value>")
+    usages+=( "-t | --tag = specify to --create or --merge a tag with --name <value>")
+    usages+=( "-r | --${NAME_PREFIX} = specify to --create or --merge a ${NAME_PREFIX} with --name <value>")
+    usages+=("'${NAME_PREFIX}' is just an ordinary --branch, but if there is a --name <value> it is automatically prefixed with '${NAME_PREFIX}-'")
+    usages+=("")
+    usages+=("-e | --email <value> = specify notify email (default=$DEFAULT_EMAILS)")
+    #usages+=("-s | --switch = switch in directory <value> to branch ${NAME_PREFIX} <value>")
+    #usages+=("-u | --update = update in directory <value> to tag ${NAME_PREFIX} <value>")
+    usages+=("")
+    usages+=("  -q | --quiet = do not send notification emails")
+    usages+=("")
+    usages+=("  -y | --yes = answer yes to all questions (automatic)")
+
+    for usage in "${usages[@]}"; do
+        flags="${usage%%=*}"
+        description="${usage#*=}"
+        shopt -s extglob
+        flags="${flags##*( )}"
+        flags="${flags%%*( )}"
+        description="${description##*( )}"
+        description="${description%%*( )}"
+        shopt -u extglob
+
+        if [ "$flags" != "" ] && [ "$flags" == "$description" ]; then
+            flags=""
+            description="  $description"
+        else
+            if [ "$description" != "" ]; then
+                description="= $description"
+            fi
+        fi
+
+        printf "  %-${flags_padding}s %s\n" "$flags" "$description"
+    done
+
+    echo
+    echo "examples:"
+    echo
+    echo "# --create examples"
+    echo
+    echo "# automatically create a ${NAME_PREFIX} branch from the current working directory (i.e. $HERE)"
+    echo "$0 -c -y"
+    echo
+    echo "# interactively create a branch, tag, and/or ${NAME_PREFIX} from the current working directory (i.e. $HERE)"
+    echo "$0 -c "
+    echo
+    echo "# automatically create a non-${NAME_PREFIX} branch named 'sandbox-jtingiris', from the current working directory (i.e. $HERE)"
+    echo "$0 -c -b -n sandbox-jtingiris -y "
+    echo
+    echo "# automatically create a non-${NAME_PREFIX} branch named 'sandbox-jtingiris', from the given directory"
+    echo "$0 -c -b -n sandbox-jtingiris -y -d /base/src/mux-0.1.0 "
+    echo
+    echo
+    echo "# --merge examples [currently, only non-${NAME_PREFIX} branches can be merged]"
+    echo
+    echo
+    echo "# --list examples"
+    echo
+    echo "# list branch and ${NAME_PREFIX} copies for the current working directory (i.e. $HERE)"
+    echo "$0 -l "
+    echo
+    echo "# list branch and ${NAME_PREFIX} copies for the current working directory with 'sandbox' in their name (i.e. $HERE)"
+    echo "$0 -l sandbox "
+    echo
+    echo "# list branch and ${NAME_PREFIX} copies for the given directory"
+    echo "$0 -l -d /base/src/mux-0.1.0 "
+    echo
+
+    if [ "$note" != "" ]; then
+        echo "NOTE: $note"
+        echo
+    fi
+
+    Debug_Variable NAME_PREFIX 1
+    Debug_Variable NAME_PREFIX_FLAG 1
+
+    # end function logic
+
+    Debug_Function $@
+
+    Stop 1
+}
+
+# Validation Logic
+
+# Options Logic
+
+# call the base Options function (to process --debug, -debug, --help, -help, --usage, -usage, --verbose, -verbose)
+Options $@
+
+# expand upon the base Options function (careful, same named switches will be processed twice)
+
+# for each command line argument, evaluate them case by case, process them, and shift to the next
+for ((ARGUMENT=1; ARGUMENT <= $ARGUMENTS_TOTAL; ARGUMENT++)); do
+    case "$1" in
+    -b | --branch | -branch)
+        BRANCH_FLAG=1
+        Debug_Variable BRANCH_FLAG 4 "$1 flag was set"
+        ;;
+    -c | --create | -create | --copy | -copy)
+        COPY_FLAG=1
+        Debug_Variable COPY_FLAG 4 "$1 flag was set"
+        ;;
+    -d | --directory | -directory)
+        DIRECTORY_FLAG=1
+        DIRECTORY="$2"
+        if [ "$DIRECTORY" != "" ] && [ ${DIRECTORY:0:1} == "-" ]; then
+            DIRECTORY=""
+        fi
+        if [ "$DIRECTORY" == "" ]; then
+            Usage "$1 argument requires a given value"
+        else
+            declare DIRECTORY=$2
+            Debug_Variable DIRECTORY 4 "$1 flag was set"
+            shift
+        fi
+        ;;
+    -e | --email | -email | --emails | -emails)
+        # supports multiple -e values
+        declare -i EMAILS_FLAG=1
+        Debug_Variable EMAILS_FLAG 4 "$1 flag was set"
+        if [ "$2" != "" ]; then
+            if [ ${2:0:1} == "-" ]; then
+                Usage "$1 argument requires a given value"
+            else
+                declare EMAILS+=" $2"
+                shift
+            fi
+        fi
+        EMAILS=$(List_Unique "$EMAILS")
+        Debug_Variable EMAILS 5
+        ;;
+    -l | --list | -list | --ls | -ls)
+        LIST_FLAG=1
+        LIST="$2"
+        if [ "$LIST" != "" ] && [ ${LIST:0:1} == "-" ]; then
+            LIST=""
+        fi
+        if [ "$LIST" != "" ]; then
+            Debug_Variable LIST 4 "$1 flag was set"
+            shift
+        fi
+        ;;
+    -m | --merge | -merge)
+        MERGE_FLAG=1
+        MERGE="$2"
+        if [ "$MERGE" != "" ] && [ ${MERGE:0:1} == "-" ]; then
+            MERGE=""
+        fi
+        if [ "$MERGE" != "" ]; then
+            Debug_Variable MERGE 4 "$1 flag was set"
+            shift
+        fi
+        ;;
+    -n | --name | -name)
+        NAME_FLAG=1
+        NAME="$2"
+        if [ "$NAME" != "" ] && [ ${NAME:0:1} == "-" ]; then
+            NAME=""
+        fi
+        if [ "$NAME" == "" ]; then
+            Usage "$1 argument requires a given value"
+        else
+            declare NAME=$2
+            Debug_Variable NAME 4 "$1 flag was set"
+            shift
+        fi
+        ;;
+    -q | --quiet | -quiet)
+        QUIET_FLAG=1
+        Debug_Variable QUIET_FLAG 4 "$1 flag was set"
+        ;;
+    # only 'release' and 'build' prefixes are supported
+    -r | --release | -release | --build | -build)
+        NAME_PREFIX_FLAG=1
+        Debug_Variable QUIET_FLAG 4 "$1 flag was set"
+        ;;
+    -s | --switch | -switch)
+        SWITCH_FLAG=1
+        Debug_Variable SWITCH_FLAG 4 "$1 flag was set"
+        ;;
+    -t | --tag | -tag)
+        TAG_FLAG=1
+        Debug_Variable TAG_FLAG 4 "$1 flag was set"
+        ;;
+    -u | --update | -update)
+        UPDATE_FLAG=1
+        Debug_Variable UPDATE_FLAG 4 "$1 flag was set"
+        ;;
+    --test | -test)
+        TEST_FLAG=1
+        Debug_Variable TEST_FLAG 4 "$1 flag was set"
+        ;;
+    -y | --yes | -yes)
+        YES_FLAG=1
+        Debug_Variable YES 4 "$1 flag was set"
+        ;;
+    -\# | --ticket | -ticket)
+        # supports multiple -u values
+        declare -i TICKETS_FLAG=1
+        Debug_Variable TICKETS_FLAG 4 "$1 flag was set"
+        if [ "$2" != "" ]; then
+            if [ ${2:0:1} == "-" ]; then
+                Usage "$1 argument requires a given value"
+            else
+                declare TICKETS+=" $2"
+                shift
+            fi
+        fi
+        TICKETS=$(List_Unique "$TICKETS")
+        Debug_Variable TICKETS 5
+        ;;
+    *)
+        # unknown flags
+        if [ "$1" != "" ] && [ $OPTION -eq 0 ]; then
+            echo "unknown flag '$1'"
+            Stop 2 # not absolutely necessary, but does enforce proper usage
+        fi
+        ;;
+    esac
+    shift
+done
+
+#echo "ARGUMENTS=$ARGUMENTS"
+
+# e.g., if there are no arguments, echo a usage message and/or exit
+if [ $ARGUMENTS_TOTAL -eq 0 ]; then Usage; fi
+
+# Main Logic
+
+Start
+
+Dependency "awk date grep pwd sed $RCS svntrunk tee"
+
+START_TIME=$(date)
+
+if [ "$WHO" == "" ]; then
+    Aborting "who are you?  maybe export WHO=username and try again??" 1
+else
+    export WHO="$WHO"
+fi
+
+if [ $COPY_FLAG -eq 1 ] && [ $LIST_FLAG -eq 1 ]; then
+    Warning "both --create and --list were specified; this is not supported (yet); only --list will function"
+fi
+
+if [ $COPY_FLAG -eq 0 ] && [ $LIST_FLAG -eq 0 ] && [ $MERGE_FLAG -eq 0 ] && [ $SWITCH_FLAG -eq 0 ] && [ $UPDATE_FLAG -eq 0 ]; then
+    Usage "must specify at least one of -c, -l, or -m"
+fi
+
+if [ $LIST_FLAG -eq 0 ] && [ $MERGE_FLAG -eq 0 ] && [ $BRANCH_FLAG -eq 0 ] && [ $NAME_PREFIX_FLAG -eq 0 ] && [ $TAG_FLAG -eq 0 ]; then
+    if [ $YES_FLAG -eq 0 ] && [ "$NAME" == "" ]; then
+        Question "specify a custom name"
+        if [ "$QUESTION_FLAG" -eq 1 ]; then
+            echo -n "enter the custom name (no spaces or special characters): "
+            read NAME
+        fi
+    fi
+    if [ "$NAME" != "" ]; then
+        Question "create a $NAME_PREFIX branch for $NAME"
+    else
+        Question "create a $NAME_PREFIX branch automatically"
+    fi
+    if [ "$QUESTION_FLAG" -eq 1 ]; then
+        NAME_PREFIX_FLAG=1
+    fi
+    if [ $NAME_PREFIX_FLAG -eq 0 ] && [ "$NAME" != "" ]; then
+        Question "create a branch for $NAME"
+        if [ "$QUESTION_FLAG" -eq 1 ]; then
+            BRANCH_FLAG=1
+        fi
+        Question "create a tag for $NAME"
+        if [ "$QUESTION_FLAG" -eq 1 ]; then
+            TAG_FLAG=1
+        fi
+    else
+        if [ $QUESTION_FLAG -eq 0 ]; then
+            Question "create a $WHO branch automatically"
+            if [ "$QUESTION_FLAG" -eq 1 ]; then
+                BRANCH_FLAG=1
+            fi
+            Question "create a $WHO tag automatically"
+            if [ "$QUESTION_FLAG" -eq 1 ]; then
+                TAG_FLAG=1
+            fi
+        fi
+    fi
+else
+    Debug_Variable BRANCH_FLAG 9
+    Debug_Variable NAME_PREFIX_FLAG 9
+    Debug_Variable TAG_FLAG 9
+fi
+
+if [ $LIST_FLAG -eq 0 ] && [ $MERGE_FLAG -eq 0 ] && [ $NAME_PREFIX_FLAG -eq 0 ] && [ $BRANCH_FLAG -eq 0 ] && [ $TAG_FLAG -eq 0 ]; then
+    Aborting "nothing to do"
+fi
+
+_Init
+
+if [ "$TMPFILE" == "" ]; then
+    TMPFILE="/tmp/$(basename $BASE_0).${START_TIME}.tmp"
+fi
+
+# start creating a tmp file to output & email what's been done (if abort, then TMPFILE will *NOT* be removed [intentionally])
+NOTIFY_SUBJECT="${WHO} ran '${BASE_0} ${ARGUMENTS}' from $MACHINE_NAME:$DIRECTORY"
+if [ "$ACCOUNT" != "" ]; then
+    NOTIFY_SUBJECT+=" for $ACCOUNT"
+fi
+
+echo "$NOTIFY_SUBJECT" | tee $TMPFILE
+echo | tee -a $TMPFILE
+
+echo "ACCOUNT                   = $ACCOUNT" | tee -a $TMPFILE
+echo "DIRECTORY                 = $DIRECTORY" | tee -a $TMPFILE
+echo "ENVIRONMENT               = $BASE_ENVIRONMENT" | tee -a $TMPFILE
+echo "MACHINE                   = $MACHINE_NAME" | tee -a $TMPFILE
+echo | tee -a $TMPFILE
+
+if [ "$RCS_TRUNK_URL" != "$RCS_URL" ] && [ "$RCS_TRUNK_URL" != "" ]; then
+    echo "RCS_TRUNK_URL             = $RCS_TRUNK_URL" | tee -a $TMPFILE
+    echo "RCS_URL                   = $RCS_URL" | tee -a $TMPFILE
+
+    # could already be switched; careful ... re-evaluate this logic
+    # this can be tested by trying to use this script from a (svn) directory that's already been switched
+    if [ $COPY_FLAG -eq 1 ]; then
+        Warning "$DIRECTORY is not a valid working copy of the trunk"
+        Question "Really create a copy from a non-trunk url"
+        if [ "$QUESTION_FLAG" -eq 1 ]; then
+            Aborting "automatically creating a copy from a non-trunk url has not been fully tested yet" 2
+        fi
+    fi
+
+    # this should be handled in _Init
+    RCS_URL=$RCS_TRUNK_URL
+
+else
+    # most common use case
+    echo "RCS_URL                   = $RCS_URL" | tee -a $TMPFILE
+fi
+
+echo | tee -a $TMPFILE
+echo "START_TIME                = $START_TIME" | tee -a $TMPFILE
+echo | tee -a $TMPFILE
+
+# Flag actions
+
+if [ $LIST_FLAG -eq 1 ]; then
+    Svn_List
+    Stop 0
+fi
+
+if [ $COPY_FLAG -eq 0 ] && [ $MERGE_FLAG -eq 0 ] && [ $SWITCH_FLAG -eq 1 ]; then
+    # should support switch to branch or tag
+    Question "switch to copy branch $COPY_BRANCH_URL"
+    if [ "$QUESTION_FLAG" -eq 1 ]; then
+        if [ $? -ne 0 ]; then
+            Aborting "svn switch to branch failed for $COPY_BRANCH_URL" 2
+        fi
+    fi
+    Stop 0 # not fully implemented yet
+fi
+
+if [ $COPY_FLAG -eq 1 ] && [ $MERGE_FLAG -eq 0 ] && [ $SWITCH_FLAG -eq 0 ]; then
+    Svn_Copy
+fi
+
+if [ $COPY_FLAG -eq 0 ] && [ $MERGE_FLAG -eq 1 ] && [ $SWITCH_FLAG -eq 0 ]; then
+    Svn_Merge
+fi
+
+# notify if a new copy, merge, or switch
+if ( [ $COPY_FLAG -eq 1 ] || [ $MERGE_FLAG -eq 1 ] || [ $SWITCH_FLAG -eq 1 ] ) && [ $FAIL_FLAG -eq 0 ]; then
+    echo | tee -a $TMPFILE
+
+    if [ "$TRAC_BRANCH_URL" == "" ]; then
+        if [ "$COPY_BRANCH_URL_REPO_URI" != "" ]; then
+            TRAC_BRANCH_URL="${DEFAULT_TRAC_URL}$COPY_BRANCH_URL_REPO_URI"
+            TRAC_BRANCH_URL=$(echo "$TRAC_BRANCH_URL" | sed -e 's#@@#@#g')
+            Debug_Variable TRAC_BRANCH_URL 1
+        fi
+    fi
+    if [ "$TRAC_BRANCH_URL" != "" ]; then
+        echo "TRAC_BRANCH_URL           = $TRAC_BRANCH_URL" | tee -a $TMPFILE
+    fi
+
+    if [ "$TRAC_TAG_URL" == "" ]; then
+        if [ "$COPY_TAG_URL_REPO_URI" != "" ]; then
+            TRAC_TAG_URL="${DEFAULT_TRAC_URL}$COPY_TAG_URL_REPO_URI"
+            TRAC_TAG_URL=$(echo "$TRAC_TAG_URL" | sed -e 's#@@#@#g')
+            Debug_Variable TRAC_TAG_URL 1
+        fi
+    fi
+    if [ "$TRAC_TAG_URL" != "" ]; then
+        echo "TRAC_TAG_URL              = $TRAC_TAG_URL" | tee -a $TMPFILE
+    fi
+
+    echo "TRAC_TRUNK_URL            = $TRAC_TRUNK_URL" | tee -a $TMPFILE
+
+
+    echo "NOTIFY_EMAILS             = $NOTIFY_EMAILS" | tee -a $TMPFILE
+    echo | tee -a $TMPFILE
+    if [ $TEST_FLAG -eq 0 ]; then
+        for NOTIFY_EMAIL in $NOTIFY_EMAILS; do
+            if [ $QUIET_FLAG -ne 0 ]; then continue; fi
+            if [ $DEBUG_FLAG -eq 0 ]; then
+                cat $TMPFILE | mailx -s "$NOTIFY_SUBJECT" $NOTIFY_EMAIL
+            else
+                echo cat $TMPFILE | mailx -s "$NOTIFY_SUBJECT" $NOTIFY_EMAIL
+            fi
+        done
+        SLACK_URL="$DEFAULT_SLACK_URL" # make this an option some day
+        if [ "$SLACK_URL" != "" ]; then
+            echo "SLACK_URL                 = $SLACK_URL" | tee -a $TMPFILE
+            for SLACK_CHANNEL in $SLACK_CHANNELS; do
+                echo "SLACK_CHANNEL             = $SLACK_CHANNEL" | tee -a $TMPFILE
+                if [ $QUIET_FLAG -ne 0 ]; then continue; fi
+                SLACK_PAYLOAD="payload={\"channel\": \"${SLACK_CHANNEL}\", \"username\": \"BotFace\", \"text\": \""
+                SLACK_PAYLOAD+="${NOTIFY_SUBJECT}"
+                SLACK_PAYLOAD+=" [ <${TRAC_TRUNK_URL}|trunk>"
+                if [ "$TRAC_BRANCH_URL" != "" ]; then
+                    SLACK_PAYLOAD+=" | <${TRAC_BRANCH_URL}|branch>"
+                fi
+                if [ "$TRAC_TAG_URL" != "" ]; then
+                    SLACK_PAYLOAD+=" | <${TRAC_TAG_URL}|tag>"
+                fi
+                SLACK_PAYLOAD+=" ]\", \"icon_emoji\": \":robot_face:\"}"
+                if [ $DEBUG_FLAG -eq 0 ]; then
+                    curl -X POST --data-urlencode "$SLACK_PAYLOAD" $SLACK_URL &> /dev/null
+                else
+                    echo curl -X POST --data-urlencode "$SLACK_PAYLOAD" $SLACK_URL
+                fi
+            done
+        fi
+    fi
+fi
+
+if [ -w "$TMPFILE" ]; then
+    rm -f "$TMPFILE"
+fi
+
+Stop 0

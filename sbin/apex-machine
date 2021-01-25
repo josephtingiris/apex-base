@@ -1,0 +1,483 @@
+#!/bin/bash
+
+# begin Apex.bash.include
+
+if [ "$Debug" == "" ]; then
+    Debug=0
+fi
+
+Apex_Bash="/apex/include/Apex.bash"
+if [ ! -r "$Apex_Bash" ]; then
+    echo "$Apex_Bash not readable"
+    exit 1;
+fi
+source "$Apex_Bash"
+
+# end Apex.bash.include
+
+# Global Variables
+
+# explicit declarations
+
+declare -i Return_Code=0
+declare -x Version="0.1";
+
+# functionNames
+
+# Validation Logic
+
+# typically, upgrade before optionArguments, begin, etc
+
+# upgrade "$0" "/base/bin /usr/local/bin"
+
+# optionArguments Logic
+
+# add usage help to the Apex_Usage array (before usage() is called for the first time [via optionArguments])
+
+Apex_Usage+=("-s | --sync = sync home directories & filesystem permissions")
+
+# call the optionArguments function (to process common options, i.e. --debug, --help, --usage, --yes, etc)
+
+optionArguments $@
+
+# expand upon the base Options function (careful, same named switches will be processed twice)
+
+# for each cli option (argument), evaluate them case by case, process them, and shift to the next
+
+declare -i Sync_Flag=1 # default off
+declare -i X_Flag=1 # default off
+
+declare -i Multiple_Flag=1 # default off
+declare -i Multiple_Optional_Flag=1 # default off
+declare -i One_Flag=1 # default off
+declare -i Single_Flag=1 # default off
+declare -i Single_Optional_Flag=1 # default off
+
+declare -i Restart_Flag=1 # default off
+declare -i Start_Flag=1 # default off
+declare -i Status_Flag=1 # default off
+declare -i Stop_Flag=1 # default off
+
+declare -i Option_Arguments_Index=0
+declare -i Option_Arguments_Shift=0
+for Option_Argument in ${Option_Arguments[@]}; do
+
+    if [ $Option_Arguments_Shift -eq 1 ]; then
+        ((Option_Arguments_Index++))
+        Option_Arguments_Shift=0
+        continue
+    fi
+
+    Option_Argument_Next="${Option_Arguments[$Option_Arguments_Index+1]}"
+
+    case "$Option_Argument" in
+        -m | --m | -multiple | --multiple)
+            # supports an argument with one or more value(s)
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ] || [ "${Option_Argument_Next}" == "restart" ] || [ "${Option_Argument_Next}" == "start" ] || [ "${Option_Argument_Next}" == "status" ] || [ "${Option_Argument_Next}" == "stop" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Multiple+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Multiple="$(listUnique "$Multiple")"
+            if [ "$Multiple" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Multiple_Flag=0
+            debugValue Multiple_Flag 2 "$Option_Argument flag was set [$Multiple]"
+            ;;
+
+        -single | --single)
+            # supports only one argument with a single value
+            if [ $Single_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ] || [ "${Option_Argument_Next}" == "restart" ] || [ "${Option_Argument_Next}" == "start" ] || [ "${Option_Argument_Next}" == "status" ] || [ "${Option_Argument_Next}" == "stop" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Single+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Single="$(listUnique "$Single")"
+            if [ "$Single" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Single_Flag=0
+            debugValue Single_Flag 2 "$Option_Argument flag was set [$Single]"
+            ;;
+
+        -s | --s | -sync | --sync)
+            # supports only one argument with or without a value
+            if [ $Sync_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+                    declare Sync+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Sync="$(listUnique "$Sync")"
+            Sync_Flag=0
+            debugValue Sync_Flag 2 "$Option_Argument flag was set [$Sync]"
+            ;;
+
+        -x | --x)
+            # supports only one argument with or without a value
+            if [ $X_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+                    declare X+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            X="$(listUnique "$X")"
+            X_Flag=0
+            debugValue X_Flag 2 "$Option_Argument flag was set [$X]"
+            ;;
+
+        restart)
+            # supports 'restart' argument
+            Restart_Flag=0
+            ((Option_Arguments_Index++))
+            debugValue Restart_Flag 2 "$Option_Argument flag was set"
+            ;;
+
+        start)
+            # supports 'start' argument
+            Start_Flag=0
+            debugValue Start_Flag 2 "$Option_Argument flag was set"
+            ;;
+
+        status)
+            # supports 'status' argument
+            Status_Flag=0
+            debugValue Status_Flag 2 "$Option_Argument flag was set"
+            ;;
+
+        stop)
+            # supports 'stop' argument
+            Stop_Flag=0
+            debugValue Stop_Flag 2 "$Option_Argument flag was set"
+            ;;
+
+        *)
+            # unsupported arguments
+            if [ "$Option_Argument" != "" ]; then
+                echo "unsupported argument '$Option_Argument'"
+                apexFinish 2
+            fi
+            ;;
+    esac
+
+    ((Option_Arguments_Index++))
+done
+unset Option_Argument_Next Option_Arguments_Index Option_Arguments_Shift
+
+# e.g., if there are no arguments, echo a usage message and/or exit
+
+#if [ $Apex_Arguments_Count -eq 0 ]; then usage; fi
+#if [ $Apex_Arguments_Count -eq 1 ] && [ $Debug_Flag -ne 1 ]; then usage; fi
+#if [ $Apex_Arguments_Count -eq 2 ] && [ $Debug_Flag -ne 1 ] && [ "$Debug" != "" ]; then usage; fi
+
+# Main Logic
+
+apexStart
+
+Machine_Dir="$Apex_Dir/machine"
+
+if [ ! -d "$Machine_Dir" ]; then
+    aborting "$Machine_Dir not found"
+fi
+
+if [ $X_Flag -eq 0 ]; then
+    if [ "$X" == "" ]; then
+        X="up"
+    fi
+    /apex/bin/svn $X /apex
+    apexFinish
+fi
+
+question continue
+
+if [ $Question_Flag -ne 0 ]; then
+    aborting "nothing done"
+fi
+
+set -f
+
+if [ -x /apex/bin/svn ]; then
+    /apex/bin/svn up /apex
+fi
+
+if [ $Sync_Flag -eq 0 ]; then
+    if [ -x /apex/sbin/apex-machine-home ]; then
+        /apex/sbin/apex-machine-home
+    else
+        if [ -x /apex/bin/svn ]; then
+            /apex/bin/svn perms "$Machine_Dir"
+            echo
+        else
+            if [ -x $Apex_Dir/local/base/bin/svn ]; then
+                $Apex_Dir/local/base/bin/svn perms "$Machine_Dir"
+                echo
+            fi
+        fi
+    fi
+fi
+
+Broken_Link=0
+Link_Check_Dirs+="/etc/ /var/"
+debugValue Link_Check_Dirs 2
+for Link_Check_Dir in $Link_Check_Dirs; do
+    if [ ! -d "$Link_Check_Dir" ]; then continue; fi
+    Broken_Links=`find $Link_Check_Dir -type l -xtype l`
+    if [ "$Broken_Links" != "" ]; then
+        warning "Removing broken symbolic links in $Link_Check_Dir ..."
+        for broken_link in $Broken_Links; do
+            echo "removing $broken_link ..."
+            rm -f "$broken_link"
+            Broken_Link=1
+        done
+    fi
+done
+
+if [ $Broken_Link -eq 1 ]; then
+    echo
+fi
+
+if [ "$Tmp_File" == "" ]; then
+    if [ ! -d "$Apex_Dir/tmp/" ]; then
+        aborting "$Apex_Dir/tmp directory not found"
+    fi
+    Tmp_File="$Apex_Dir/tmp/apex.machine.tmp"
+else
+    Tmp_File="$Apex_Dir/${Tmp_File}"
+fi
+
+Pad_1=20
+Pad_2=65
+
+Apex_Machine_Dirs="${Machine_Dir}/* ${Machine_Dir}/$Apex_Hostname"
+
+cat /dev/null > "$Tmp_File"
+for Apex_Machine_Dir in $Apex_Machine_Dirs; do
+    if [ -d "$Apex_Machine_Dir" ]; then
+        #find "$Apex_Machine_Dir" -type f -o -type l | egrep \/cp\/ >> "$Tmp_File"
+        #find "$Apex_Machine_Dir" -type f -o -type l | egrep \/ln\/ >> "$Tmp_File"
+        #find "$Apex_Machine_Dir" -type f -o -type l | egrep -ve "\/cp\/|\/ln\/" >> "$Tmp_File"
+        find "$Apex_Machine_Dir" | egrep \/cp\/ >> "$Tmp_File"
+        find "$Apex_Machine_Dir" | egrep \/ln\/ >> "$Tmp_File"
+        find "$Apex_Machine_Dir" | egrep -ve "\/cp\/|\/ln\/" >> "$Tmp_File"
+    fi
+done
+echo "Tmp_File = $Tmp_File"
+#cat "$Tmp_File"
+echo
+
+if [ $Sync_Flag -eq 0 ]; then
+    cat /dev/null > "${Tmp_File}.dir"
+    while read -r Apex_Machine_File; do
+        if [ ! -d "$Apex_Machine_File" ]; then
+            dirname "$Apex_Machine_File" >> "${Tmp_File}.dir"
+        else
+            echo "$Apex_Machine_File" >> "${Tmp_File}.dir"
+        fi
+    done < $Tmp_File
+    cat "${Tmp_File}.dir" | sort -u > "${Tmp_File}.dirs"
+
+    while read -r Apex_Machine_Dir; do
+        Root_Dir=$(echo -n "$Apex_Machine_Dir" | sed -e "s#${Machine_Dir}##g" -e 's#^\/\*#/#g' -e 's#//#/#g' -e "s#^\/$Apex_Hostname#/#g" -e "s#//#/#g")
+        if [ "$Root_Dir" == "" ] || [ "$Root_Dir" == "/" ]; then continue; fi
+        if [ "${Root_Dir:0:3}" == "/cp" ]; then continue; fi
+        if [ "${Root_Dir:0:3}" == "/ln" ]; then continue; fi
+        if [ ! -d "$Root_Dir" ]; then
+            mkdir -p "$Root_Dir"
+            if [ $? -ne 0 ]; then
+                aborting "failed to mkdir -p $Root_Dir"
+            fi
+        fi
+        if [ -d "$Root_Dir" ]; then
+            printf "%-${Pad_1}s %-${Pad_2}s %s\n" "syncing dir" ": ${Apex_Machine_Dir}" "--> $Root_Dir"
+            rsync -alp "${Apex_Machine_Dir}/" "${Root_Dir}/"
+            if [ $? -ne 0 ]; then
+                aborting "failed to rsync -alp "$Apex_Machine_File" "$Root_File""
+            fi
+        fi
+    done < ${Tmp_File}.dirs
+
+    rm "${Tmp_File}.dir" "${Tmp_File}.dirs"
+fi
+
+while read -r Apex_Machine_File; do
+    if [ ! -r $Apex_Machine_File ]; then
+        echo -e "Apex_Machine_File    = "$Apex_Machine_File
+        aborting "can't read $Apex_Machine_File"
+    fi
+
+    if [ -d "$Apex_Machine_File" ]; then
+        debug "Apex_Machine_File = $Apex_Machine_File (directory)" 31
+    else
+        debug "Apex_Machine_File = $Apex_Machine_File (file)" 33
+    fi
+
+    No_Op=0
+
+    Root_File=$(echo -n "$Apex_Machine_File" | sed -e "s#${Machine_Dir}##g" -e 's#^\/\*#/#g' -e 's#//#/#g' -e "s#^\/$Apex_Hostname#/#g" -e "s#//#/#g")
+
+    Root_Copy=""
+    Root_Link=""
+
+    for Apex_Machine_Dir in $Apex_Machine_Dirs; do
+        if [ "$Root_Copy" != "" ]; then break; fi
+        if [ "${Root_File:0:3}" == "/cp" ]; then
+            Root_Copy=$(echo -n "$Root_File" | sed -e "s#$Apex_Machine_Dir##g"  -e "s#^\/cp##g" -e "s#//#/#g")
+            Root_File=$Root_Copy
+            Root_Link=""
+        fi
+    done
+
+    for Apex_Machine_Dir in $Apex_Machine_Dirs; do
+        if [ "$Root_Link" != "" ]; then break; fi
+        if [ "${Root_File:0:3}" == "/ln" ]; then
+            Root_Link=$(echo -n "$Root_File" | sed -e "s#$Apex_Machine_Dir##g" -e "s#^\/ln##g" -e "s#//#/#g")
+            Root_File=$Root_Link
+            Root_Copy=""
+        fi
+    done
+
+    if [ "$Root_File" == "" ]; then
+        debug "root file is null ($Apex_Machine_File)" 1
+        continue
+    fi
+
+    if [ -d "$Root_File" ]; then
+        debug "Root_File = $Root_File (directory)" 31
+    else
+        debug "Root_File = $Root_File (file)" 33
+    fi
+
+    #echo "Root_File = $Root_File, Root_Copy = $Root_Copy, Root_Link = $Root_Link"
+
+    if [ -d "$Root_File" ]; then
+        Root_Dir="$Root_File"
+    else
+        Root_Dir=$(dirname "$Root_File")
+
+        if [ ! -d "$Root_Dir" ]; then
+            echo "mkdir        : $Root_Dir"
+            printf "%-${Pad_1}s %-${Pad_2}s %s\n" "mkdir" ": $Root_Dir"
+            mkdir -p "$Root_Dir"
+        fi
+    fi
+
+    if [ -f "$Root_File" ] || [ -h "$Root_File" ]; then
+
+        if [ -h "$Root_File" ]; then
+            Read_Link=$(readlink -f "$Root_File")
+            if [ "$Read_Link" == "$Apex_Machine_File" ]; then
+                if [ $Verbose_Flag -eq 0 ]; then
+                    printf "%-${Pad_1}s %-${Pad_2}s %s\n" "OK (link)" ": $Apex_Machine_File" "--> $Root_File"
+                fi
+                No_Op=1
+            else
+                diff --no-dereference "$Root_File" "$Apex_Machine_File" &> /dev/null
+                if [ $? -eq 0 ]; then
+                    if [ $Verbose_Flag -eq 0 ]; then
+                        printf "%-${Pad_1}s %-${Pad_2}s %s\n" "OK (link)(cp)" ": $Apex_Machine_File" "--> $Root_File"
+                    fi
+                    No_Op=1
+                else
+                    printf "%-${Pad_1}s %-${Pad_2}s %s\n" "removing link" ": $Root_File" ""
+                    rm -f "$Root_File"
+                    if [ $? -ne 0 ]; then
+                        aborting "failed to rm -f $Root_File"
+                    fi
+                fi
+            fi
+        else
+            if [ "$Root_Link" != "" ]; then
+                printf "%-${Pad_1}s %-${Pad_2}s %s\n" "removing file" ": $Root_File" "--> ${Root_File}.${Apex_Uniq}"
+                rm -f "$Root_File"
+                if [ $? -ne 0 ]; then
+                    aborting "failed to rm -f $Root_File"
+                fi
+            else
+                diff "$Apex_Machine_File" "$Root_File" &> /dev/null
+                if [ $? -eq 0 ]; then
+                    if [ $Verbose_Flag -eq 0 ]; then
+                        printf "%-${Pad_1}s %-${Pad_2}s %s\n" "OK (file)" ": $Apex_Machine_File" "--> $Root_File"
+                    fi
+                    No_Op=1
+                else
+                    Root_File_Dir=$(dirname "$Root_File")
+                    Root_File_Backup="$(basename "${Root_File}").${Apex_Uniq}.bak"
+                    Root_File_Backup_Dir=$(echo "$Machine_Backup_Dir/$Root_File_Dir" | sed -e "s#//#/#g")
+                    printf "%-${Pad_1}s %-${Pad_2}s %s\n" "backup file" ": $Root_File" "--> ${Root_File_Backup_Dir}/${Root_File_Backup}"
+                    if [ ! -d "$Root_File_Backup_Dir" ]; then
+                        mkdir -p "$Root_File_Backup_Dir"
+                        if [ $? -ne 0 ]; then
+                            aborting "failed to mkdir -p '$Root_File_Backup_Dir'"
+                        fi
+                    fi
+
+                    mv "$Root_File" "${Root_File_Backup_Dir}/${Root_File_Backup}"
+                    if [ $? -ne 0 ]; then
+                        aborting "failed to mv $Root_File ${Root_File_Backup_Dir}/${Root_File_Backup}"
+                    fi
+                fi
+            fi
+        fi
+        #else
+        #echo "missing      : $Root_File ($Apex_Machine_File)"
+    fi
+
+    #echo "Root_File            = $Root_File (copy=$Root_Copy, link=$Root_Link)"
+    #echo
+    #continue
+
+    if [ -d "$Root_File" ]; then
+        No_Op=1
+    fi
+
+    if [ "$Root_Link" != "" ]; then
+        if [ $No_Op -eq 0 ]; then
+            printf "%-${Pad_1}s %-${Pad_2}s %s\n" "linking" ": $Apex_Machine_File" "--> $Root_File"
+            ln -s "$Apex_Machine_File" "$Root_File"
+            if [ $? -ne 0 ]; then
+                aborting "failed to ln -s "$Apex_machine_File" "$Root_File""
+            fi
+        fi
+    else
+        if [ $No_Op -eq 0 ]; then
+            if [ -d "$Root_File" ]; then
+                printf "%-${Pad_1}s %-${Pad_2}s %s\n" "syncing directory" ": $Apex_Machine_File" "--> $Root_File"
+                Slash="/"
+            else
+                printf "%-${Pad_1}s %-${Pad_2}s %s\n" "syncing file" ": $Apex_Machine_File" "--> $Root_File"
+                Slash=""
+            fi
+            rsync -alp "${Apex_Machine_File}${Slash}" "${Root_File}${Slash}"
+            if [ $? -ne 0 ]; then
+                aborting "failed to rsync -alp "$Apex_Machine_File" "$Root_File""
+            fi
+        fi
+    fi
+
+done < $Tmp_File
+
+for ssh_dir in $(find /home -name .ssh) /root/.ssh; do
+    find $ssh_dir/ -type d | xargs -r -t chmod 0700
+    find $ssh_dir/ -type f | xargs -r -t chmod 0400
+done
+
+set +o noglob
+chmod 0400 /etc/ssh/*key
+
+apexFinish
