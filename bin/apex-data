@@ -1,0 +1,415 @@
+#!/bin/bash
+
+# This script will provide data values based on a directory name.
+
+# Copyright (C) 2019 Joseph Tingiris (joseph.tingiris@gmail.com)
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+# begin Apex.bash.include
+
+if [ ${#Debug} -gt 0 ]; then
+    Debug=${Debug}
+else
+    if [ ${#DEBUG} -gt 0 ]; then
+        Debug=${DEBUG}
+    else
+        Debug=0
+    fi
+fi
+
+if [ ${#Apex_Bash_Source} -eq 0 ]; then
+    Apex_Bashes=()
+    Apex_Bashes+=(Apex.bash)
+    Apex_Bashes+=(Base.bash)
+
+    Apex_Bash_Dirs=()
+    Apex_Bash_Dirs+=(/apex)
+    Apex_Bash_Dirs+=(/base)
+    Apex_Bash_Dirs+=(/usr)
+    Apex_Bash_Dirs+=(${BASH_SOURCE%/*})
+    Apex_Bash_Dirs+=(~)
+
+    for Apex_Bash_Dir in ${Apex_Bash_Dirs[@]}; do
+        while [ ${#Apex_Bash_Dir} -gt 0 ] && [ "$Apex_Bash_Dir" != "/" ]; do # search backwards
+            Apex_Bash_Source_Dirs=()
+            Apex_Bash_Source_Dirs+=("${Apex_Bash_Dir}/include/apex-bash")
+            Apex_Bash_Source_Dirs+=("${Apex_Bash_Dir}/include")
+            Apex_Bash_Source_Dirs+=("${Apex_Bash_Dir}")
+            for Apex_Bash in ${Apex_Bashes[@]}; do
+                for Apex_Bash_Source_Dir in ${Apex_Bash_Source_Dirs[@]}; do
+                    Apex_Bash_Source=${Apex_Bash_Source_Dir}/${Apex_Bash}
+
+                    if [ -r "${Apex_Bash_Source}" ]; then
+                        source "${Apex_Bash_Source}"
+                        break
+                    else
+                        unset -v Apex_Bash_Source
+                    fi
+                done
+                [ ${Apex_Bash_Source} ] && break
+            done
+            [ ${Apex_Bash_Source} ] && break
+            Apex_Bash_Dir=${Apex_Bash_Dir%/*} # search backwards
+        done
+        [ ${Apex_Bash_Source} ] && break
+    done
+fi
+
+if [ ${#Apex_Bash_Source} -eq 0 ] || [ ! -r "${Apex_Bash_Source}" ]; then
+    echo "${Apex_Bash} file not readable"
+    exit 1
+fi
+
+# end Apex.bash.include
+
+# Global_Variables
+
+Ignores=(@ account archetype bin certificate html include includes log opt sbin session srv usr tmp)
+Input_Dir=""
+
+# explicit declarations
+
+declare -x Version="0.1";
+
+declare -i Return_Code=0
+
+# functionNames
+
+# Validation Logic
+
+dependency "date"
+
+# optionArguments Logic
+
+# add usage help to the Apex_Usage array (before usage() is called for the first time [via optionArguments])
+
+Apex_Required=()
+Apex_Required+=("directory")
+
+Apex_Usage=()
+Apex_Usage+=("--all = print all values")
+Apex_Usage+=("-a | --account = print the account name")
+Apex_Usage+=("-d | --domain-name = print the domain name")
+Apex_Usage+=("-p | --prefix = print the prefix")
+Apex_Usage+=("-r | --document-root = print the document root (html)")
+Apex_Usage+=("-s | --server-name = print the server name (default=yes)")
+
+# call the optionArguments function (to process common options, i.e. --debug, --help, --usage, --yes, etc)
+
+optionArguments $@
+
+# expand upon the optionArguments function (careful, same named switches will be processed twice)
+
+# for each cli option (argument), evaluate them case by case, process them, and shift to the next
+
+declare -i Account_Flag=1 # 0=true/on/yes, 1=false/off/no
+declare -i All_Flag=1 # 0=true/on/yes, 1=false/off/no
+declare -i Document_Root_Flag=1 # 0=true/on/yes, 1=false/off/no
+declare -i Domain_Name_Flag=1 # 0=true/on/yes, 1=false/off/no
+declare -i Prefix_Flag=1 # 0=true/on/yes, 1=false/off/no
+declare -i Server_Name_Flag=1 # 0=true/on/yes, 1=false/off/no
+
+declare -i Option_Arguments_Index=0
+declare -i Option_Arguments_Shift=0
+for Option_Argument in ${Option_Arguments[@]}; do
+
+    if [ ${Option_Arguments_Shift} -eq 1 ]; then
+        ((Option_Arguments_Index++))
+        Option_Arguments_Shift=0
+        continue
+    fi
+
+    Option_Argument_Next="${Option_Arguments[${Option_Arguments_Index}+1]}"
+
+    case "${Option_Argument}" in
+        -a | -account | --account)
+            # supports only one argument without a value
+            if [ ${Account_Flag} -eq 0 ]; then
+                usage "${Option_Argument} may only be given once"
+            fi
+            Account_Flag=0
+            debugValue Account_Flag 2 "${Option_Argument} flag was set"
+            ;;
+
+        --all)
+            # supports only one argument without a value
+            if [ ${All_Flag} -eq 0 ]; then
+                usage "${Option_Argument} may only be given once"
+            fi
+            All_Flag=0
+            debugValue All_Flag 2 "${Option_Argument} flag was set"
+            ;;
+
+        -d | -domain-name | --domain-name)
+            # supports only one argument without a value
+            if [ ${Domain_Name_Flag} -eq 0 ]; then
+                usage "${Option_Argument} may only be given once"
+            fi
+            Domain_Name_Flag=0
+            debugValue Domain_Name_Flag 2 "${Option_Argument} flag was set"
+            ;;
+
+        -p | -prefix | --prefix)
+            # supports only one argument without a value
+            if [ ${Prefix_Flag} -eq 0 ]; then
+                usage "${Option_Argument} may only be given once"
+            fi
+            Prefix_Flag=0
+            debugValue Prefix_Flag 2 "${Option_Argument} flag was set"
+            ;;
+
+        -r | -document-root | --document-root)
+            # supports only one argument without a value
+            if [ ${Document_Root_Flag} -eq 0 ]; then
+                usage "${Option_Argument} may only be given once"
+            fi
+            Document_Root_Flag=0
+            debugValue Document_Root_Flag 2 "${Option_Argument} flag was set"
+            ;;
+
+        -s | -server-name | --server-name)
+            # supports only one argument without a value
+            if [ ${Server_Name_Flag} -eq 0 ]; then
+                usage "${Option_Argument} may only be given once"
+            fi
+            Server_Name_Flag=0
+            debugValue Server_Name_Flag 2 "${Option_Argument} flag was set"
+            ;;
+
+        *)
+            Option_Unsupported=0
+            if [ ${#Input_Dir} -eq 0 ]; then
+                if [ -d "${Option_Argument}" ]; then
+                    Input_Dir="${Option_Argument}"
+                    Option_Unsupported=1
+                else
+                    if [[ "${Option_Argument}" == */* ]]; then
+                        Input_Dir="${Option_Argument}"
+                        Option_Unsupported=1
+                    fi
+                fi
+            fi
+
+            if [ ${Option_Unsupported} -eq 0 ]; then
+                # unsupported arguments
+                if [ "${Option_Argument}" != "" ]; then
+                    echo "unsupported argument '${Option_Argument}'"
+                    apexFinish 2
+                fi
+            fi
+            ;;
+
+        esac
+
+        ((Option_Arguments_Index++))
+    done
+    unset -v Option_Argument_Next Option_Arguments_Index Option_Arguments_Shift
+
+# e.g., if there are no arguments, echo a usage message and/or exit
+
+if [ ${Apex_Arguments_Count} -eq 0 ]; then Server_Name_Flag=0; fi
+if [ ${Apex_Arguments_Count} -eq 1 ] && [ ${Debug_Flag} -ne 1 ]; then Server_Name_Flag=0; fi
+if [ ${Apex_Arguments_Count} -eq 2 ] && [ ${Debug_Flag} -ne 1 ] && [ "${Debug}" != "" ]; then Server_Name_Flag=0; fi
+
+# Main Logic
+
+apexStart
+
+#
+# evaluate input directory
+#
+
+if [ ${#Input_Dir} -eq 0 ]; then
+    Input_Dir=${PWD}
+fi
+
+debugValue "Apex_Dir" 3
+debugValue "Input_Dir" 3
+
+if [[ "${Input_Dir}" == ${Apex_Dir}* ]]; then
+    debug "${Input_Dir} starts with ${Apex_Dir}" 4
+
+    # apex account name
+    Account=${Input_Dir#*${Apex_Dir}}
+    if [[ "${Account}" == /account/* ]]; then
+        Account=${Account#*/account/}
+        Account=${Account%%/*}
+    else
+        Account="${Apex_Dir##*/}"
+    fi
+
+    # apex domain name
+    Domain_Name=${Input_Dir#*${Apex_Dir}}
+    if [[ "${Domain_Name}" == /account/* ]]; then
+        Domain_Name=${Domain_Name#*/account/}
+        Domain_Name=${Domain_Name#*/}
+        Domain_Name=${Domain_Name%%/*}
+    else
+        if [[ "${Domain_Name}" == /srv/* ]]; then
+            Domain_Name=${Domain_Name#*/srv/}
+            Domain_Name=${Domain_Name%%/*}
+        else
+            Domain_Name=""
+        fi
+    fi
+
+    # apex server_name
+    Server_Name=${Input_Dir#*${Apex_Dir}}
+    if [[ "${Server_Name}" == /account/* ]]; then
+        Server_Name=${Server_Name#*/account/}
+        Server_Name=${Server_Name#*/}
+        Server_Name="${Server_Name//\// }"
+        for Word in ${Server_Name}; do
+            Reverse="${Word} ${Reverse}"
+        done
+        Server_Name=${Reverse}
+        unset -v Reverse Word
+    else
+            Server_Name=""
+    fi
+
+fi
+
+# empty account
+if [ ${#Account} -eq 0 ]; then
+    if [ -r "${Apex_Dir}/etc/account_name" ]; then
+        Account=$(grep -v "^#" "${Apex_Dir}/etc/account_name" | head -1)
+    fi
+fi
+
+# empty domain name
+if [ ${#Domain_Name} -eq 0 ]; then
+    if [ -r "${Apex_Dir}/etc/domain_name" ]; then
+        Domain_Name=$(grep -v "^#" "${Apex_Dir}/etc/domain_name" | head -1)
+    fi
+fi
+
+# empty server name
+if [ ${#Server_Name} -eq 0 ]; then
+    if [[ "${Input_Dir}" == */* ]]; then
+        if [[ "${Input_Dir}" == ${Apex_Dir}* ]]; then
+            Server_Name="${Input_Dir//\// }"
+            for Word in ${Server_Name}; do
+                Reverse="${Word} ${Reverse}"
+            done
+            Server_Name=${Reverse}
+            if [[  ! "${Server_Name}" == *${Domain_Name}* ]]; then
+                Server_Name+=.${Domain_Name}
+            fi
+        else
+            Server_Name=${Input_Dir##*/}.${Domain_Name}
+        fi
+    fi
+fi
+
+# final server name
+for Word in ${Server_Name}; do
+    Skip=1
+
+    if [ "/${Account}" == "${Apex_Dir}" ]; then
+        Ignores+=(${Account})
+    fi
+
+    for Ignore in ${Ignores[@]}; do
+        if [ "${Ignore}" == "${Word}" ]; then
+            Skip=0
+            break
+        fi
+    done
+    if [ ${Skip} -eq 0 ]; then continue; fi
+    if [ ${#Apex_Server_Name} -eq 0 ]; then
+        Apex_Server_Name="${Word}"
+    else
+        Apex_Server_Name+=".${Word}"
+    fi
+done
+Server_Name=${Apex_Server_Name//../.}
+#if [[ ${Server_Name} =~ ^. ]]; then
+#Server_Name=${Server_Name/./}
+#fi
+unset -v Apex_Server_Name Skip Word
+
+# empty document root
+if [ ${#Document_Root} -eq 0 ]; then
+    Document_Root="${Input_Dir}/html"
+    Document_Root=${Document_Root//\/\//\/}
+fi
+
+# empty prefix
+if [ ${#Account} -gt 0 ] && [ ${#Server_Name} -gt 0 ]; then
+    Prefix=${Account}.${Server_Name}
+    Prefix=${Prefix//../.}
+fi
+
+#
+# process flags
+#
+
+if [ ${All_Flag} -eq 0 ]; then
+    Account_Flag=0
+    Document_Root_Flag=0
+    Domain_Name_Flag=0
+    Prefix_Flag=0
+    Server_Name_Flag=0
+fi
+
+# this is ordered to be backward compatible with base-server-name output
+
+if [ ${Account_Flag} -eq 0 ]; then
+    debugValue Account 5
+    if [ ${#Account} -eq 0 ]; then
+        aborting "could not determine --account for '${Input_Dir}'"
+    else
+        echo "${Account}"
+    fi
+fi
+
+if [ ${Document_Root_Flag} -eq 0 ]; then
+    debugValue Document_Root 5
+    if [ ${#Document_Root} -eq 0 ]; then
+        aborting "could not determine --document-root for '${Input_Dir}'"
+    else
+        echo "${Document_Root}"
+    fi
+fi
+
+if [ ${Prefix_Flag} -eq 0 ]; then
+    debugValue Prefix 5
+    if [ ${#Prefix} -eq 0 ]; then
+        aborting "could not determine --prefix for '${Input_Dir}'"
+    else
+        echo "${Prefix}"
+    fi
+fi
+
+if [ ${Domain_Name_Flag} -eq 0 ]; then
+    debugValue Domain_Name 5
+    if [ ${#Domain_Name} -eq 0 ]; then
+        aborting "could not determine --domain-name for '${Input_Dir}'"
+    else
+        echo "${Domain_Name}"
+    fi
+fi
+
+if [ ${Server_Name_Flag} -eq 0 ]; then
+    debugValue Server_Name 5
+    if [ ${#Server_Name} -eq 0 ]; then
+        aborting "could not determine --server-name for '${Input_Dir}'"
+    else
+        echo "${Server_Name}"
+    fi
+fi
+
+apexFinish ${Return_Code}

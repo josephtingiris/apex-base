@@ -1,0 +1,11 @@
+#!/bin/bash
+
+set -f
+
+for arg in $@; do
+    if [ -w $arg ]; then
+        echo "svn up --set-depth exclude $arg"
+        svn up --set-depth exclude $arg
+        echo
+    fi
+done

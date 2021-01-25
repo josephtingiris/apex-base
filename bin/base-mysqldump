@@ -1,0 +1,58 @@
+#!/bin/bash
+
+function aborting() {
+    printf "\n$(date) aborting ... $@\n\n"
+    exit 2
+}
+
+Backup_Dir=/backup/db/$(hostname -s)
+
+Backup_Date=$(date +%Y-%m-%d)
+
+if [ "${Backup_Days}" == "" ]; then
+    Backup_Days=7
+fi
+
+if [ ! -r ${Backup_Dir}/.env ]; then
+    aborting "${Backup_Dir}/.env file not found readable"
+    exit 2
+else
+    source ${Backup_Dir}/.env
+
+    if [ ! -d "${Backup_Dir}" ]; then
+        mkdir -p "${Backup_Dir}"
+    fi
+
+    if [ "${1}" != "" ]; then
+        DB_DATABASE="${1}"
+    fi
+
+    if [ "${DB_DATABASE}" == "" ]; then
+        aborting "DB_DATABASE is empty"
+    fi
+
+    if [ -d "${Backup_Dir}" ]; then
+        Backup_File="${Backup_Dir}/${DB_DATABASE//--/}-mysqldump-${Backup_Date}"
+        let Backup_File_Counter=0
+        let Backup_File_Counter_Max=10
+        while [ -f "${Backup_File}.sql" ] || [ -f "${Backup_File}.sql.gz" ]; do
+            let Backup_File_Counter=${Backup_File_Counter}+1
+            Backup_File="${Backup_Dir}/${DB_DATABASE//--/}-mysqldump-${Backup_Date}-${Backup_File_Counter}"
+
+            if [ ${Backup_File_Counter} -ge ${Backup_File_Counter_Max} ]; then
+                break
+            fi
+        done
+        Backup_File+=".sql"
+
+        echo "$(date) backup DB_DATABASE=${DB_DATABASE} mysqldump to ${Backup_File} started"
+        /usr/bin/mysqldump --user=${DB_USERNAME} --password="${DB_PASSWORD}" --single-transaction --skip-lock-tables --add-drop-database --add-drop-table ${DB_DATABASE} &> "${Backup_File}"
+        if [ $? -eq 0 ]; then
+            echo "$(date) backup DB_DATABASE=${DB_DATABASE} mysqldump to ${Backup_File} completed"
+            gzip "${Backup_File}"
+            echo "$(date) backup DB_DATABASE=${DB_DATABASE} removing dumps older than ${Backup_Days} days."
+            find "${Backup_Dir}" -type f -name "${DB_DATABASE}-mysqldump-2*" -mtime +${Backup_Days} | xargs -r rm
+            echo "$(date) backup DB_DATABASE=${DB_DATABASE} gzip of ${Backup_File}.gz completed"
+        fi
+    fi
+fi

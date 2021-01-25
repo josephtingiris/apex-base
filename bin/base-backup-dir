@@ -1,0 +1,80 @@
+#!/bin/bash
+
+function aborting() {
+    printf "\n$(date) aborting ... $@\n\n"
+    exit 2
+}
+
+if [ "${1}" == "" ]; then
+    printf "\nusage: $0 <directory>\n\n"
+    exit 1
+else
+    Source_Dir="${1}"
+fi
+
+if [[ "${2}" =~ [0-9]+ ]]; then
+    Backup_Days="${2}"
+else
+    Backup_Days=7
+fi
+
+Backup_Dir=/backup/dir/$(hostname -s)
+
+Backup_Date=$(date +%Y-%m-%d)
+
+if [ ! -d "${Backup_Dir}" ]; then
+    mkdir -p "${Backup_Dir}"
+    if [ $? -ne 0 ]; then
+        aborting "failed to mkdir -p ${Backup_Dir}"
+    fi
+fi
+
+if [ -r ${Backup_Dir}/.env ]; then
+    source ${Backup_Dir}/.env
+fi
+
+if [ -d "${Source_Dir}" ]; then
+    if [ ! -r "${Source_Dir}" ]; then
+        aborting "Source_Dir '${Source_Dir}' directory not found readable"
+    fi
+else
+    aborting "Source_Dir '${Source_Dir}' directory not found"
+fi
+
+if [ -d "${Backup_Dir}" ]; then
+    if [ -w "${Backup_Dir}" ]; then
+        Backup_File_Basename="backup-${Source_Dir////-}"
+        Backup_File_Basename="${Backup_File_Basename//--/-}"
+        Backup_File="${Backup_Dir}/${Backup_File_Basename}-${Backup_Date}"
+        Backup_File="${Backup_File//--/-}"
+        Backup_File="${Backup_File//\/\///}"
+
+        let Backup_File_Counter=0
+        let Backup_File_Counter_Max=10
+        while [ -f "${Backup_File}.tar" ] || [ -f "${Backup_File}.tar.gz" ]; do
+            let Backup_File_Counter=${Backup_File_Counter}+1
+            Backup_File="${Backup_File}-${Backup_File_Counter}"
+
+            if [ ${Backup_File_Counter} -ge ${Backup_File_Counter_Max} ]; then
+                break
+            fi
+        done
+        Backup_File+=".tar"
+
+        echo "$(date) backup Source_Dir=${Source_Dir} backup to ${Backup_File} started"
+
+        cd "${Source_Dir}"
+        tar cvpf "${Backup_File}" .
+        if [ $? -eq 0 ]; then
+            gzip "${Backup_File}"
+            echo "$(date) backup Source_Dir=${Source_Dir} to ${Backup_File}.gz completed"
+            echo "$(date) backup Source_Dir=${Source_Dir} removing dumps older than ${Backup_Days} days."
+            find "${Backup_Dir}" -type f -name "${Backup_File_Basename}*" -mtime +${Backup_Days} | xargs -r rm
+            echo "$(date) backup Source_Dir=${Source_Dir} gzip of ${Backup_File}.gz completed"
+        fi
+    else
+        aborting "'${Backup_Dir}' directory not found writable"
+    fi
+else
+    aborting "'${Backup_Dir}' directory not found"
+fi

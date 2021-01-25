@@ -1,0 +1,292 @@
+#!/bin/bash
+
+# jtingiris
+
+# begin Apex.bash.include
+
+if [ "$Debug" == "" ]; then
+    Debug=0
+fi
+
+Apex_Bashes=(/apex/include/Apex.bash /base/include/Apex.bash)
+for Apex_Bash in ${Apex_Bashes[@]}; do
+    if [ -r "$Apex_Bash" ]; then
+        break
+    fi
+done
+
+if [ ! -r "$Apex_Bash" ]; then
+    echo "$Apex_Bash not readable"
+    exit 1;
+fi
+
+source "$Apex_Bash"
+
+# end Apex.bash.include
+
+# Global_Variables
+
+# explicit declarations
+
+declare -x Version="0.1";
+
+declare -i Return_Code=0
+
+set -f
+
+# Global_Variables
+
+# functionNames
+
+# Validation Logic
+
+dependency "/apex/bin/svn"
+
+# typically, upgrade before optionArguments, begin, etc
+
+# upgrade "$0" "/apex/bin /usr/local/bin"
+
+# optionArguments Logic
+
+# add usage help to the Apex_Usage array (before usage() is called for the first time [via optionArguments])
+
+Apex_Usage+=("-a | --add                       = add new files before committing")
+Apex_Usage+=("-r | --rm                        = remove missing files before committing")
+Apex_Usage+=("-p | --prop                      = commit only property changes")
+Apex_Usage+=("-m | --comment <value>           = use the given comment (you can also use '-m')")
+
+# call the optionArguments function (to process common options, i.e. --debug, --help, --usage, --yes, etc)
+
+optionArguments $@
+
+# expand upon the optionArguments function (careful, same named switches will be processed twice)
+
+# for each cli option (argument), evaluate them case by case, process them, and shift to the next
+
+declare -i Add_Flag=1
+declare -i Force_Flag=1
+declare -i Rm_Flag=1
+declare -i Prop_Flag=1
+declare -i Comment_Flag=1
+
+declare -i Option_Arguments_Index=0
+declare -i Option_Arguments_Shift=0
+for Option_Argument in ${Option_Arguments[@]}; do
+
+    if [ $Option_Arguments_Shift -eq 1 ]; then
+        ((Option_Arguments_Index++))
+        Option_Arguments_Shift=0
+        continue
+    fi
+
+    Option_Argument_Next="${Option_Arguments[$Option_Arguments_Index+1]}"
+
+    case "$Option_Argument" in
+
+        --add | -add | -a)
+            if [ $Add_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "$Option_Argument_Next" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+                    usage "$Option_Argument argument does not accept values"
+                fi
+            fi
+            Add_Flag=0
+            debugValue Add_Flag 2 "$Option_Argument flag was set"
+            ;;
+
+        --comment | -comment | -m)
+            if [ $Comment_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ] || [ "${Option_Argument_Next}" == "restart" ] || [ "${Option_Argument_Next}" == "start" ] || [ "${Option_Argument_Next}" == "status" ] || [ "${Option_Argument_Next}" == "stop" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Comment+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Comment="$(listUnique "$Comment")"
+            if [ "$Example" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Example_Flag=0
+            debugValue Example_Flag 2 "$Option_Argument flag was set [$Example]"
+            ;;
+
+        --force | -force | -f)
+            if [ $Force_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "$Option_Argument_Next" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+                    usage "$Option_Argument argument does not accept values"
+                fi
+            fi
+            Force_Flag=0
+            debugValue Force_Flag 2 "$Option_Argument flag was set"
+            ;;
+
+        --perm | -perm | --perms | -perms | --prop | -prop | --props | -props | -p)
+            if [ $Prop_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "$Option_Argument_Next" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+                    usage "$Option_Argument argument does not accept values"
+                fi
+            fi
+            Prop_Flag=0
+            debugValue Prop_Flag 2 "$Option_Argument flag was set"
+            ;;
+
+        --rm | -rm | -r)
+            if [ $Rm_Flag -eq 0 ]; then
+                usage "$Option_Argument may only be given once"
+            fi
+            if [ "$Option_Argument_Next" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+                    usage "$Option_Argument argument does not accept values"
+                fi
+            fi
+            Rm_Flag=0
+            debugValue Rm_Flag 2 "$Option_Argument flag was set"
+            ;;
+
+        *)
+            # unsupported arguments
+            if [ "$Option_Argument" != "" ]; then
+                Regex="$Option_Argument"
+            fi
+            ;;
+
+        esac
+
+        ((Option_Arguments_Index++))
+    done
+    unset Option_Argument_Next Option_Arguments_Index Option_Arguments_Shift
+
+# e.g., if there are no arguments, echo a usage message and/or exit
+
+if [ $Apex_Arguments_Count -eq 0 ]; then usage; fi
+if [ $Apex_Arguments_Count -eq 1 ] && [ $Debug_Flag -ne 1 ]; then usage; fi
+if [ $Apex_Arguments_Count -eq 2 ] && [ $Debug_Flag -ne 1 ] && [ "$Debug" != "" ]; then usage; fi
+
+# Main Logic
+
+apexStart
+
+if [ "$Who" != "" ]; then
+    export WHO=$Who
+fi
+
+if [ "$WHO" != "" ]; then
+    export WHO=$WHO
+fi
+
+# this script will commit a scope of changes (based on a regex [egrep] of the full file name)
+
+Return_Code=0
+
+if [ "$Regex" == "" ]; then Regex="."; fi
+echo "regex '$Regex' [$Tmp_File]"
+
+if [ $Prop_Flag -eq 0 ]; then
+    svn stat | egrep -e "$Regex" | egrep -e "^\ M" | cut -c 9- | sed -e 's#$#@#g'> "${Tmp_File}.prop"
+
+    if [ -s "${Tmp_File}.prop" ] && [ -r "${Tmp_File}.prop" ]; then
+        cat "${Tmp_File}.prop" | sed -e 's#@$##g'
+        echo
+
+        if [ "$Comment" == "" ]; then
+            svn commit --depth empty --targets "${Tmp_File}.prop"
+            Return_Code=$?
+        else
+            echo
+            echo "comment '$Comment'"
+            echo
+            svn commit --depth empty --targets "${Tmp_File}.prop" -m "$Comment"
+            Return_Code=$?
+        fi
+
+        echo "no matches"
+    fi
+fi
+
+svn stat | egrep -e "$Regex" | grep \^\?  | cut -c 9- > "${Tmp_File}.add"
+if [ -s "${Tmp_File}.add" ] && [ -r "${Tmp_File}.add" ]; then
+    echo
+    echo "Found new files: (try --add)"
+    echo
+    cat "${Tmp_File}.add"
+    echo
+    if [ $Add_Flag -eq 0 ]; then
+        svn add --targets "${Tmp_File}.add"
+        Return_Code=$?
+    fi
+fi
+
+svn stat | egrep -e "$Regex" | grep \^\!  | cut -c 9- > "${Tmp_File}.rm"
+if [ -s "${Tmp_File}.rm" ] && [ -r "${Tmp_File}.rm" ]; then
+    echo
+    echo "Found removed files: (try --rm)"
+    echo
+    cat "${Tmp_File}.rm"
+    echo
+    if [ $Rm_Flag -eq 0 ]; then
+        svn rm --targets "${Tmp_File}.rm"
+        Return_Code=$?
+    fi
+fi
+
+svn stat | egrep -e "$Regex" | egrep -e "^A|^D|^M|^\ M" | cut -c 9- > "${Tmp_File}.commit"
+if [ -s "${Tmp_File}.commit" ] && [ -r "${Tmp_File}.commit" ]; then
+    Commit_Flag=0
+    if [ -s "${Tmp_File}.add" ] && [ $Add_Flag = 1 ]; then
+        Commit_Flag=1
+    fi
+    if [ -s "${Tmp_File}.rm" ] && [ $Rm_Flag = 1 ]; then
+        Commit_Flag=1
+    fi
+    if [ $Force_Flag -eq 0 ]; then
+        Commit_Flag=0
+    fi
+    if [ $Commit_Flag -eq 0 ]; then
+        if [ "$Comment" == "" ]; then
+            svn commit --targets "${Tmp_File}.commit"
+            Return_Code=$?
+        else
+            echo
+            echo "comment '$Comment'"
+            echo
+            svn commit --targets "${Tmp_File}.commit" -m "$Comment"
+            Return_Code=$?
+        fi
+    else
+        echo
+        echo "Found changed files:"
+        echo
+        cat "${Tmp_File}.commit"
+        echo
+    fi
+fi
+
+if [ -w "${Tmp_File}.add" ]; then
+    rm -f "${Tmp_File}.add"
+fi
+
+if [ -w "${Tmp_File}.commit" ]; then
+    rm -f "${Tmp_File}.commit"
+fi
+
+if [ -w "${Tmp_File}.prop" ]; then
+    rm -f "${Tmp_File}.prop"
+fi
+
+if [ -w "${Tmp_File}.rm" ]; then
+    rm -f "${Tmp_File}.rm"
+fi
+
+end $Return_Code

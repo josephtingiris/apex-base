@@ -1,0 +1,129 @@
+#!/bin/bash
+
+# this script will simply try and determine the trunk url for a given directory; harmless
+
+# jtingiris
+
+# begin base.bash.include
+
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+
+INCLUDE_FILE="base.bash"
+INCLUDE_FOUND=0
+INCLUDE_PATHS="$(dirname $0) $(pwd)"
+
+for INCLUDE_PATH in $INCLUDE_PATHS; do
+    if [ $INCLUDE_FOUND -eq 1 ]; then break; fi
+    while [ ! -z "$INCLUDE_PATH" ]; do
+        if [ "$INCLUDE_PATH" == "." ]; then INCLUDE_PATH=$(pwd -L .); fi
+        if [ "$INCLUDE_PATH" == "/" ]; then break; fi
+        if [ -r "$INCLUDE_PATH/include/$INCLUDE_FILE" ] && [ ! -d "$INCLUDE_PATH/include/$INCLUDE_FILE" ]; then
+            INCLUDE_FOUND=1
+            source "$INCLUDE_PATH/include/$INCLUDE_FILE"
+            Debug "sourced $INCLUDE_PATH/include/$INCLUDE_FILE" 500
+            break
+        else
+            INCLUDE_PATH=$(dirname "$INCLUDE_PATH")
+        fi
+    done
+done
+if [ $INCLUDE_FOUND -ne 1 ]; then echo "$INCLUDE_FILE file not found"; exit 1; fi
+if [ "$BASE_INCLUDE" == "" ]; then echo "$INCLUDE_FILE file invalid"; exit 1; fi
+unset INCLUDE_PATH INCLUDE_FILE
+
+# end base.bash.include
+
+if [ "$DEBUG" == "" ]; then
+    DEBUG=0
+fi
+
+Start
+
+Dependency "awk date grep pwd sed svn"
+
+SVN_PWD=$(pwd -P)
+Debug_Variable SVN_PWD 10
+
+SVN_URL=$(svn info 2> /dev/null | grep ^URL: | awk -FURL: '{print $NF}' | sed -e 's#^[ \t]*###g' -e 's#[ \t]$*##g')
+if [ "$SVN_URL" == "" ]; then
+    Debug "$SVN_PWD is not a svn working directory" 9
+    exit 9
+fi
+Debug_Variable SVN_URL 10
+
+SVN_ROOT=$(svn info 2> /dev/null | grep ^Repository\ Root: | awk -FRepository\ Root: '{print $NF}' | sed -e 's#^[ \t]*###g' -e 's#[ \t]$*##g')
+if [ "$SVN_ROOT" == "" ]; then
+    Debug "$SVN_PWD is not a valid svn working directory" 9
+    exit 9
+fi
+Debug_Variable SVN_ROOT 10
+
+SVN_TRUNK_URL=$(echo "$SVN_URL" | grep \/trunk\/)
+if [ "$SVN_TRUNK_URL" == "" ]; then
+    # note; last move/copy revision isn't ALWAYS the trunk URL
+    # for example, if a branch or tag was renamed, the last copy url will be its previous name
+    # what needs to happen here is to follow the path back to the ORIGINAL/FIRST move/copy to trunk ... hindsight .. 20/20
+    # -jjt
+    #SVN_COPY_REVISION=$(svn log --stop-on-copy . 2> /dev/null | grep ^r[0-9]*\ \| | tail -1 | awk '{print $1}')
+    declare -i SVN_COPY_REVISION_FIRST=$(svn log -r 1:HEAD --limit 1 --stop-on-copy . 2> /dev/null | grep ^r[0-9]*\ \| | sed -e '/^r/s///g' | tail -1 | awk '{print $1}')
+    Debug_Variable SVN_COPY_REVISION_FIRST 10 1
+
+    if [ "$SVN_COPY_REVISION_FIRST" == "" ]; then
+        delcare -i SVN_COPY_REVISION_FIRST=0
+    else
+        SVN_FROM=$(svn log --verbose -r $SVN_COPY_REVISION_FIRST 2> /dev/null | grep \(from | head -1 | awk -Ffrom '{print $NF}' | awk -F: '{print $1}' | sed -e 's#^[ \t]*###g' -e 's#[ \t]$*##g' | grep \/trunk\/)
+        Debug_Variable SVN_FROM 10 1
+    fi
+
+    if [ "$SVN_FROM" == "" ]; then
+        let SVN_COPY_REVISION_NEXT=0
+        while [ $SVN_COPY_REVISION_FIRST -gt 1 ] && [ $SVN_COPY_REVISION_FIRST -ne $SVN_COPY_REVISION_NEXT ]; do
+            let SVN_COPY_REVISION_NEXT=$SVN_COPY_REVISION_FIRST-1
+            Debug_Variable SVN_COPY_REVISION_NEXT 10
+
+            declare -i SVN_COPY_REVISION_FIRST=$(svn log -r 1:$SVN_COPY_REVISION_NEXT --limit 1 --stop-on-copy . 2> /dev/null | grep ^r[0-9]*\ \| | sed -e '/^r/s///g' | tail -1 | awk '{print $1}')
+            Debug_Variable SVN_COPY_REVISION_FIRST 10 loop
+        done
+    fi
+
+    if [ "$SVN_COPY_REVISION_FIRST" == "" ] || [ "$SVN_COPY_REVISION_FIRST" == "0" ]; then
+        Debug "invalid SVN_COPY_REVISION" 9
+        exit 9
+    fi
+
+    SVN_COPY_REVISION=$SVN_COPY_REVISION_FIRST
+
+    Debug_Variable SVN_COPY_REVISION 10
+
+    if [ "$SVN_COPY_REVISION" != "" ] && [ "$SVN_FROM" == "" ]; then
+        SVN_FROM=$(svn log --verbose -r $SVN_COPY_REVISION 2> /dev/null | grep \(from | head -1 | awk -Ffrom '{print $NF}' | awk -F: '{print $1}' | sed -e 's#^[ \t]*###g' -e 's#[ \t]$*##g' | grep \/trunk\/)
+    fi
+
+    if [ "$SVN_FROM" != "" ]; then
+
+        SVN_TRUNK_URL=${SVN_ROOT}${SVN_FROM}
+
+    else
+        SVN_FROM=$(echo "$SVN_URL" | grep \/trunk$)
+        if [ "$SVN_FROM" != "" ]; then
+            SVN_FROM="/trunk"
+
+            SVN_TRUNK_URL=${SVN_ROOT}${SVN_FROM}
+
+        fi
+    fi
+
+    Debug_Variable SVN_TRUNK_URL 10
+    Debug_Variable SVN_FROM 10
+
+    if [ "$SVN_TRUNK_URL" != "" ]; then
+        echo "$SVN_TRUNK_URL"
+    else
+        Debug "$SVN_PWD failed to determine svn trunk" 9
+        exit 9
+    fi
+else
+    echo "$SVN_TRUNK_URL"
+fi
+
+Stop 0

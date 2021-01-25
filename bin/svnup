@@ -1,0 +1,92 @@
+#!/bin/bash
+
+# jtingiris
+
+# this script will svn up in a 'less-locking' manner; it's slower but less intrusive; needs more testing
+
+
+PATH=/base/bin:/base/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
+
+MAXDEPTH=3
+
+if [ "$1" == "" ]; then
+    DIR_UP=$(pwd)
+else
+    if [ "$DIR_UP" == "." ]; then
+        DIR_UP=$(pwd)
+    else
+        if [ "$DIR_UP" == ".." ]; then
+            DIR_UP=$(pwd)/..
+        else
+            DIR_UP="$1"
+        fi
+    fi
+fi
+
+if [ ! -d "$DIR_UP" ]; then
+    echo
+    echo "aborting, $DIR_UP directory not found"
+    echo
+    exit 1
+#else
+    #echo "DIR_UP=$DIR_UP"
+fi
+
+DIRS=$(find "$DIR_UP"/* -maxdepth $MAXDEPTH ! -wholename "*.svn*" | sort -r -t\/ -k 1)
+DIRS_COUNT=0
+
+PARENTS=($DIR_UP)
+
+OFS=$IFS
+IFS=$'\n'
+for DIR in $DIRS; do
+    IFS=$OFS
+    if [ ! -d "$DIR" ]; then continue; fi
+    PARENT=$(dirname "$DIR")
+    for parent_dir in ${PARENTS[@]}; do
+        if [ "$parent_dir" == "$PARENT" ]; then
+            IS_PARENT=1
+            break
+        else
+            IS_PARENT=0
+        fi
+    done
+    if [ $IS_PARENT -eq 0 ]; then
+        PARENTS+=( "$(echo $PARENT)" )
+    fi
+done
+
+#echo PARENTS=${PARENTS[@]}
+
+OFS=$IFS
+IFS=$'\n'
+for DIR in $DIRS; do
+    IFS=$OFS
+    IS_PARENT=0
+    if [ ! -d "$DIR" ]; then continue; fi
+    let DIRS_COUNT=$DIRS_COUNT+1
+
+    for parent_dir in ${PARENTS[@]}; do
+        if [ "$parent_dir" == "$DIR" ]; then
+            echo "Updating '$DIR'"
+            svn up "$DIR" --depth files &> /dev/null
+            if [ $? -ne 0 ]; then
+                echo "[$DIRS_COUNT]: ERROR [$parent_dir][$IS_PARENT] $DIR"
+            fi
+            IS_PARENT=1
+            break
+        fi
+    done
+
+    if [ $IS_PARENT -eq 1 ]; then continue; fi
+
+    echo "Updating '$DIR'"
+    svn up "$DIR" &> /dev/null
+    if [ $? -ne 0 ]; then
+        echo "[$DIRS_COUNT]: ERROR [$parent_dir][$IS_PARENT] $DIR"
+    fi
+done
+
+if [ $DIRS_COUNT -eq 0 ]; then
+    svn up "$DIR"
+fi

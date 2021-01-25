@@ -1,0 +1,147 @@
+#!/bin/bash
+
+# This script will ... produce a svn log report of recent changes (by a specific user, etc)
+
+ARGUMENTS="$@"
+
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+
+BASE_INCLUDE=/base/include/base.bash
+if [ ! -f $BASE_INCLUDE ] && [ "$BASE_INCLUDE" != "" ]; then
+    BASE_INCLUDE="/usr/local/include/base.bash"
+fi
+if [ ! -f $BASE_INCLUDE ]; then
+    echo
+    echo "ERROR: can't find include file $BASE_INCLUDE"
+    echo
+    exit 9
+    else
+    source "$BASE_INCLUDE"
+fi
+
+# machine special directories require globbing turned off
+
+set -f
+
+# GLOBAL_VARIABLES
+
+# defaults
+
+DEFAULT_DATE=`date +%Y%m%d`
+
+# 0=off, 1=on
+ALL_FLAG=0
+USER_FLAG=0
+
+# Function_Names
+
+Usage() {
+    echo
+    echo "usage: $0 <options>"
+    echo
+    echo "options:"
+    echo
+    echo "  --all                      = show changes for all users [default=just you]"
+    echo "  --user                     = show changes for a specific user [default=you]"
+    echo
+    echo "  --debug                     = turn on debugging"
+    echo "  --help                      = this message"
+    echo
+    echo "  --verbose                   = increase verbosity"
+    echo
+    if [ "$1" != "" ]; then
+        echo "$1"
+        echo
+    fi
+    exit 1
+}
+
+# Validation Logic
+
+# if there are no arguments, echo a usage message and/or exit
+#if [ $# -eq 0 ]; then usage; fi
+
+# Options Logic
+
+# call the base Options function (to process --debug, -debug, --help, -help, --usage, -usage, --verbose, -verbose)
+Options $@
+
+# because the arguments get shifted each time, make sure to set and use a previously declared variable
+declare -i ARGUMENTS_TOTAL=$#
+
+# for each command line argument, evaluate them case by case, process them, and shift to the next
+for ((i=1; i <= $ARGUMENTS_TOTAL; i++)); do
+    case "$1" in
+    --all|-a)
+        ALL_FLAG=1
+        Debug "$1 flag was set" 4
+    ;;
+    --user)
+        USER_FLAG=1
+        USER_FLAG_VALUE="$2"
+        if [ "$USER_FLAG_VALUE" == "" ]; then usage "$1 requires a given user name"; fi
+        if [ "$USER_FLAG_VALUE" != "" ] && [ ${USER_FLAG_VALUE:0:1} == "-" ]; then
+            echo "warning, $1 argument value looks like a flag!";
+        fi
+        Debug "$1 flag value = '$2'" 4
+        shift
+    ;;
+    esac
+    shift
+done
+
+# Main Logic
+
+Start
+
+# do something
+
+#if [ $USER_FLAG -ne 1 ]; then usage "must specify a --user file"; fi
+
+if [ $USER_FLAG -eq 0 ]; then
+    ME=`who -m | awk '{print $1}'`
+else
+    ME=$USER_FLAG_VALUE
+fi
+TODAY=`date --date=today +%Y-%m-%d`
+YESTERDAY=`date --date=yesterday +%Y-%m-%d`
+TOMORROW=`date --date=tomorrow +%Y-%m-%d`
+
+if [ ! `echo $HERE | grep base` ]; then cd $BASE_DIR; fi
+
+SVN_CMD="$SVN log"
+if [ $VERBOSE_FLAG -eq 1 ]; then
+    SVN_CMD=$SVN_CMD" -v"
+fi
+SVN_CMD=$SVN_CMD" -r {$TODAY}:HEAD"
+
+if [ $ALL_FLAG -eq 1 ]; then
+    REVISIONS=`$SVN_CMD | grep ^r[0-9] | awk '{print $1}'`
+else
+    #$SVN_CMD | sed -n "/$ME/,/-----$/ p" | paste -s --delimiters=" " #| egrep -e "^[a-z]|^[A-Z]" | grep -v "$ME"
+    REVISIONS=`$SVN_CMD | sed -n "/$ME/,/-----$/ p" | grep ^r[0-9] | awk '{print $1}'`
+fi
+
+TOTAL_UPDATES=0
+for REVISION in $REVISIONS; do
+    DESCRIPTION=`svn log -r $REVISION | egrep -ve '^-|^r[0-9]' | sed -e "/\\n/s///g" | paste -s --delimiters=""`
+    UPDATED_FILES=`svn log -r $REVISION -v | egrep -e 'A\ |M\ |D' | awk '{print $2}' | sed -e '/\/trunk/s///g'`
+    declare -i UPDATED_FILES_COUNT=0
+    for UPDATED_FILE in $UPDATED_FILES; do
+        let UPDATED_FILES_COUNT=$UPDATED_FILES_COUNT+1
+        let TOTAL_UPDATES=$TOTAL_UPDATES+1
+    done
+    echo "Committed $UPDATED_FILES_COUNT files; $DESCRIPTION"
+    for UPDATED_FILE in $UPDATED_FILES; do
+        echo "$UPDATED_FILE"
+    done
+    echo
+done
+
+if [ $ALL_FLAG -eq 0 ]; then
+    echo
+    echo "$ME commited a total of $TOTAL_UPDATES updates."
+    echo
+fi
+
+Stop 0

@@ -1,0 +1,3 @@
+#!/bin/bash
+
+# this script will create a svn tagged copy of the trunk -jjt

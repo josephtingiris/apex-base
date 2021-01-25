@@ -1,0 +1,68 @@
+#!/bin/bash
+
+if [ -f ignore.recursive ] && [ "$1" == "" ]; then
+    echo "processing ignore.recursive ..."
+    echo
+    svn_stat=$(svn stat ignore.recursive | awk '{print $1}')
+    if [ "$svn_stat" == "?" ]; then
+        svn add ignore.recursive
+    fi
+    cat ignore.recursive
+    echo
+    svn propset svn:ignore -F ignore.recursive . --recursive
+    echo
+else
+    if [ -f ignore.specific ] && [ "$1" == "" ]; then
+        echo "processing ignore.specific ..."
+        echo
+        svn_stat=$(svn stat ignore.specific | awk '{print $1}')
+        if [ "$svn_stat" == "?" ]; then
+            svn add ignore.specific
+        fi
+        HERE=$(pwd)
+        OIFS=$IFS
+        IFS=$'\n'
+        for raw_line in $(sort -u "ignore.specific" | grep -v ignore.specific | grep -v ^\#); do
+            line=$(echo "$raw_line" | sed -e "s#^?##g" -e "s#^ *##g")
+            line_basename=$(basename "$line")
+            line_dirname=$(dirname "$line")
+            if [ "$line_basename" == "" ] || [ "$line_dirname" == "" ]; then continue; fi
+            #echo "line=$line"
+            #echo "line_basename=$line_basename"
+            #echo "line_dirname=$line_dirname"
+            if [ -d  "$line_dirname" ]; then
+                IGNORED=$(svn propget svn:ignore "$line_dirname" 2> /dev/null | grep ^"$line_basename"$)
+                if [ "$IGNORED" != "" ]; then
+                    echo "svn:ignore $line ... property exists"
+                    IGNORED=""
+                    continue
+                else
+                    echo "svn:ignore $line ... property MISSING"
+                fi
+
+                cd "$line_dirname"
+                svn rm --force "$line_basename" &> /dev/null
+                svn propget svn:ignore . 2> /dev/null > svnignore.tmp
+                #if [ -f "$line_basename" ]; then
+                    echo "$line_basename" >> svnignore.tmp
+                #fi
+                if [ -f svnignore.tmp ]; then
+                    sort -u svnignore.tmp > svnignore.tmp.s
+                    svn propset svn:ignore -F svnignore.tmp.s . &> /dev/null
+                    rm -f svnignore.tmp svnignore.tmp.s
+                fi
+            fi
+            IGNORED=""
+            cd "$HERE"
+        done
+        IFS=$OIFS
+        echo
+        cd "$HERE"
+    else
+        if [ "$1" == "" ]; then
+            svn propedit svn:ignore .
+        else
+            svn propedit svn:ignore "$1"
+        fi
+    fi
+fi

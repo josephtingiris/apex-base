@@ -1,0 +1,509 @@
+#!/bin/bash
+
+# This script 'enhances' the default behavior of svn 1.6 & 1.7
+
+# 20170705, jtingiris, simplified even more, even more less intrusive, faster, more portable
+# 20170129, jtingiris, greatly simplified, less intrusive, faster, portable
+# 20150318, jtingiris, created
+
+# begin Apex.bash.include
+
+if [ "${Debug}" == "" ]; then
+    Debug=0
+fi
+
+Apex_Bashes="/apex/include/Apex.bash /base/include/Base.bash"
+for Apex_Bash in ${Apex_Bashes}; do
+    if [ -r "${Apex_Bash}" ]; then
+        source "${Apex_Bash}"
+        break
+    fi
+done
+
+if [ ! -r "${Apex_Bash}" ]; then
+    echo "${Apex_Bash} not readable"
+    #exit 1;
+fi
+
+# end Apex.bash.include
+
+# disable globbing
+set -f
+
+# set the umask so files are group-wriable
+umask 002
+
+ARGUMENTS=("$@")
+
+declare -i RC=0
+
+# Function_Names
+
+function svnApex() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    echo "$0, version ${SVN_VERSION} (base)"
+
+    # end function logic
+
+    debugFunction $@
+
+    svnStop
+
+}
+
+function svnPerms() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    # special "root" permissions
+    if [ "$1" == "perm" ] || [ "$1" == "perms" ] || [ "$1" == "owner" ] || [ "$1" == "group" ] || [ "$1" == "mode" ]; then
+
+        if [ "$1" == "perm" ] || [ "$1" == "perms" ] || [ "$1" == "mode" ]; then
+            if [ "$2" != "" ] && [ -r "$2" ]; then
+                if [ -d "$2" ]; then
+                    SVN_MODES=$(echo "$2 - $(${SVN_BIN} -R propget mode "$2" | awk -F\/ '{print NF"##"$0}' | sed -e '/1##\./s//0##./g' | sort | awk -F"##" '{print $NF}')")
+                else
+                    SVN_MODES=$(echo "$2 - $(${SVN_BIN} propget mode "$2" | awk -F\/ '{print NF"##"$0}' | sed -e '/1##\./s//0##./g' | sort | awk -F"##" '{print $NF}')")
+                fi
+            else
+                SVN_MODES=$(${SVN_BIN} -R propget mode | awk -F\/ '{print NF"##"$0}' | sed -e '/1##\./s//0##./g' | sort | awk -F"##" '{print $NF}')
+            fi
+
+            debugValue SVN_MODES 50
+
+            if [ "${SVN_MODES}" != "" ]; then
+                echo
+                echo -n "applying svn mode properties "
+                if [ ${#Debug} -gt 0 ] && [ "${Debug}" != "0" ]; then
+                    echo
+                    echo
+                fi
+                OIFS=${IFS}
+                IFS=$'\n'
+
+                for SVN_MODE in ${SVN_MODES}; do
+                    IFS=${OIFS}
+
+                    A_MODE=""
+                    B_MODE=""
+
+                    A_MODE=$(echo "${SVN_MODE}" | awk -F\ -\  '{print $1}')
+                    if stat -f "${A_MODE}" | grep "Type: nfs" &> /dev/null; then
+                        A_MODE=""
+                    fi
+                    if [ "${A_MODE}" == "" ]; then continue; fi
+
+                    B_MODE=$(echo "${SVN_MODE}" | awk -F\ -\  '{print $NF}')
+                    if [ "${B_MODE}" == "" ]; then continue; fi
+
+                    if [ ${#Debug} -gt 0 ] && [ "${Debug}" != "0" ]; then
+                        echo -n "+ [${B_MODE}] ${A_MODE}"
+                    else
+                        echo -n "."
+                    fi
+
+                    if [ -d "${A_MODE}" ]; then
+                        A_MODE_BASENAME=$(basename "${A_MODE}")
+                        A_MODE_BASENAME=$(readlink -m "${A_MODE_BASENAME}")
+                        A_MODE_BASENAME=$(basename "${A_MODE_BASENAME}")
+
+                        if [ ${#Debug} -gt 0 ] && [ "${Debug}" != "0" ]; then
+                            echo
+                            echo "find \"${A_MODE}/\" -xdev -a ! -type l -a ! -perm ${B_MODE} -print0 | xargs -0 -r chmod -R \"$B_MODE\""
+                        else
+                            find "${A_MODE}/" -xdev -a ! -type l -a ! -perm ${B_MODE} -print0 2> /dev/null | xargs -0 -r chmod -R "${B_MODE}" &> /dev/null
+                        fi
+
+                        if [ "${A_MODE_BASENAME}" != "bin" ] && [ "${A_MODE_BASENAME}" != "sbin" ]; then
+                            if [ ${#Debug} -gt 0 ] && [ "${Debug}" != "0" ]; then
+                                echo
+                            fi
+
+                            if [ ${#Debug} -gt 0 ] && [ "${Debug}" != "0" ]; then
+                                echo "find \"${A_MODE}/\" -xdev -type f -executable -print0 | xargs -0 -r chmod \"u-x,g-x,o-x\""
+                            else
+                                find "${A_MODE}/" -xdev -type f -executable -print0 2> /dev/null | xargs -0 -r chmod "u-x,g-x,o-x" &> /dev/null
+                            fi
+                        else
+                            if [ ${#Debug} -gt 0 ] && [ "${Debug}" != "0" ]; then
+                                echo " ! [preseving execute bits] !"
+                            else
+                                echo -n "!"
+                            fi
+                        fi
+                    else
+                        if [ ${#Debug} -gt 0 ] && [ "${Debug}" != "0" ]; then
+                            echo
+                        fi
+                        chmod "${B_MODE}" "${A_MODE}" &> /dev/null
+                    fi
+                    if [ $? -ne 0 ]; then
+                        warning "failed to chmod ${B_MODE} ${A_MODE}"
+                    fi
+                done
+            fi
+        fi
+
+    fi
+
+    if [ "$1" == "perm" ] || [ "$1" == "perms" ] || [ "$1" == "group" ]; then
+        if [ "$2" != "" ] && [ -r "$2" ]; then
+            if [ -d "$2" ]; then
+                SVN_GROUPS=$(echo "$2 - $(${SVN_BIN} -R propget group "$2" | awk -F\/ '{print NF"##"$0}' | sed -e '/1##\./s//0##./g' | sort | awk -F"##" '{print $NF}')")
+            else
+                SVN_GROUPS=$(echo "$2 - $(${SVN_BIN} propget group "$2" | awk -F\/ '{print NF"##"$0}' | sed -e '/1##\./s//0##./g' | sort | awk -F"##" '{print $NF}')")
+            fi
+        else
+            SVN_GROUPS=$(${SVN_BIN} -R propget group | awk -F\/ '{print NF"##"$0}' | sed -e '/1##\./s//0##./g' | sort | awk -F"##" '{print $NF}')
+        fi
+
+        debugValue SVN_GROUPS 50
+
+        if [ "${SVN_GROUPS}" != "" ]; then
+            echo
+            echo -n "applying svn group properties "
+            if [ ${#Debug} -gt 0 ] && [ "${Debug}" != "0" ]; then
+                echo
+                echo
+            fi
+            OIFS=${IFS}
+            IFS=$'\n'
+
+            for SVN_GROUP in ${SVN_GROUPS}; do
+                IFS=${OIFS}
+                A_GROUP=$(echo "${SVN_GROUP}" | awk -F\ -\  '{print $1}')
+                if [ "${A_GROUP}" == "" ] || [ "${A_GROUP}" == "/" ]; then continue; fi
+                B_GROUP=$(echo "${SVN_GROUP}" | awk -F\ -\  '{print $NF}')
+                if [ "${B_GROUP}" == "" ]; then continue; fi
+                if [ ${#Debug} -gt 0 ] && [ "${Debug}" != "0" ]; then
+                    echo "+ [${B_GROUP}] ${A_GROUP}"
+                else
+                    echo -n "."
+                fi
+                if [ ${#Debug} -gt 0 ] && [ "${Debug}" != "0" ]; then
+                    echo "find \"${A_GROUP}\" -xdev ! -group \"${B_GROUP}\" -print0 | xargs -0 -r chgrp -R \"${B_GROUP}\""
+                else
+                    find "${A_GROUP}" -xdev ! -group "${B_GROUP}" -print0 2> /dev/null | xargs -0 -r chgrp -R "${B_GROUP}"
+                fi
+                if [ $? -ne 0 ]; then
+                    warning "failed to chgrp -R ${B_GROUP} ${A_GROUP}"
+                fi
+                A_GROUP=""
+                B_GROUP=""
+            done
+        fi
+    fi
+
+    if [ "$1" == "perm" ] || [ "$1" == "perms" ] || [ "$1" == "owner" ]; then
+        if [ "$2" != "" ] && [ -r "$2" ]; then
+            if [ -d "$2" ]; then
+                SVN_OWNERS=$(echo "$2 - $(${SVN_BIN} -R propget owner "$2" | awk -F\/ '{print NF"##"$0}' | sed -e '/1##\./s//0##./g' | sort | awk -F"##" '{print $NF}')")
+            else
+                SVN_OWNERS=$(echo "$2 - $(${SVN_BIN} propget owner "$2" | awk -F\/ '{print NF"##"$0}' | sed -e '/1##\./s//0##./g' | sort | awk -F"##" '{print $NF}')")
+            fi
+        else
+            SVN_OWNERS=$(${SVN_BIN} -R propget owner | awk -F\/ '{print NF"##"$0}' | sed -e '/1##\./s//0##./g' | sort | awk -F"##" '{print $NF}')
+        fi
+
+        debugValue SVN_OWNERS 50
+
+        if [ "${SVN_OWNERS}" != "" ]; then
+            echo
+            echo -n "applying svn owner properties "
+            if [ ${#Debug} -gt 0 ] && [ "${Debug}" != "0" ]; then
+                echo
+                echo
+            fi
+            OIFS=${IFS}
+            IFS=$'\n'
+
+            for SVN_OWNER in ${SVN_OWNERS}; do
+                IFS=${OIFS}
+                A_OWNER=$(echo "${SVN_OWNER}" | awk -F\ -\  '{print $1}')
+                if [ "${A_OWNER}" == "" ] || [ "${A_OWNER}" == "/" ]; then continue; fi
+                B_OWNER=$(echo "${SVN_OWNER}" | awk -F\ -\  '{print $NF}')
+                if [ "${B_OWNER}" == "" ]; then continue; fi
+                if [ ${#Debug} -gt 0 ] && [ "${Debug}" != "0" ]; then
+                    echo "+ [${B_OWNER}] ${A_OWNER}"
+                else
+                    echo -n "."
+                fi
+                if [ ${#Debug} -gt 0 ] && [ "${Debug}" != "0" ]; then
+                    echo "find \"${A_OWNER}\" -xdev ! -user \"${B_OWNER}\" -print0 | xargs -0 -r chown -R \"${B_OWNER}\""
+                else
+                    find "${A_OWNER}" -xdev ! -user "${B_OWNER}" -print0 2> /dev/null | xargs -0 -r chown -R "${B_OWNER}" &> /dev/null
+                fi
+                if [ $? -ne 0 ]; then
+                    warning "failed to chown -R ${B_OWNER} ${A_OWNER}"
+                fi
+                A_OWNER=""
+                B_OWNER=""
+            done
+        fi
+    fi
+
+    if [ "${SVN_OWNERS}" != "" ] || [ "${SVN_GROUPS}" != "" ] || [ "${SVN_MODES}" != "" ]; then
+        if [ ${#Debug} -gt 0 ] && [ "${Debug}" != "0" ]; then
+            echo
+        fi
+        echo
+        echo
+    fi
+
+    # end function logic
+
+    debugFunction $@
+
+    svnStop
+
+}
+
+function svnStop() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    stop_message="$0"
+    if [ "${ARGUMENTS}" != "" ]; then
+        stop_message+=" ${ARGUMENTS[@]}"
+    fi
+
+    if [ "$1" != "" ]; then
+        stop_message+=" [$1]"
+    fi
+
+    if [ "${ARGUMENTS}" != "" ] || [ "$1" != "" ]; then
+        if [ ${RC} -ne 0 ]; then
+            systemLog "${stop_message} failed with rc=${RC}"
+        else
+            systemLog "${stop_message} succeeded"
+        fi
+    fi
+
+    # end function logic
+
+    debugFunction $@
+
+end ${RC}
+
+}
+
+function svnWho() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    echo "0=$0"
+    echo "LOGNAME=${LOGNAME}"
+    echo "SVN_WHO=${SVN_WHO}"
+    echo "USER=${USER}"
+    echo "WHO=${WHO}"
+    echo "WHOM=${WHOM}"
+
+    if [ "${Apex_User}" != "" ]; then
+        echo "Apex_User=${Apex_User}"
+    fi
+
+    if [ "${Base_User}" != "" ]; then
+        echo "Base_User=${Base_User}"
+    fi
+
+    # end function logic
+
+    debugFunction $@
+
+    svnStop
+
+}
+
+# Validation Logic
+
+
+if [ "${SVN_BIN}" == "" ]; then
+    if [ -x /opt/rh/sclo-subversion19/root/usr/bin/svn ]; then
+        SVN_BIN=/opt/rh/sclo-subversion19/root/usr/bin/svn
+    else
+        SVN_BIN=/usr/bin/svn
+    fi
+fi
+
+debugValue SVN_BIN 9
+debugValue SVN 9
+
+if [ ! -x ${SVN_BIN} ]; then
+    aborting "${SVN_BIN} is not installed" 1
+fi
+debugValue SVN 9
+
+SVN_VERSION=$(${SVN_BIN} --version | grep ^svn,\ version | awk '{print $3}' | egrep -e '1\.[6-9]\.|1\.1[0-4]\.' 2> /dev/null)
+debugValue SVN_VERSION 9
+
+if [ "${SVN_VERSION}" == "" ]; then
+    # can't determine the version, so don't interfere (except to log)
+    echo "unsupported svn version"
+    exit
+fi
+
+if [ "${WHOM}" == "" ]; then export WHOM=$(logname 2> /dev/null); fi
+if [ "${WHO}" == "" ]; then export WHO="${WHOM%% *}"; fi
+if [ "${WHO}" == "" ]; then export WHO=${USER}; fi
+if [ "${WHO}" == "" ]; then export WHO=${LOGNAME}; fi
+if [ "${WHO}" == "" ]; then export WHO=UNKNOWN; fi
+
+if [ "${SVN_WHO}" == "" ]; then
+    export SVN_WHO="${WHO}"
+fi
+
+if [ "${SVN_WHO}" == "" ]; then
+    aborting "can't determine who you really are" 2
+fi
+debugValue SVN_WHO 9
+
+# Options Logic
+
+# Main Logic
+
+begin
+
+dependency "/bin/svn"
+
+if [ "${EDITOR}" == "" ] && [ "${SVN_EDITOR}" == "" ]; then
+    # prefer vim
+    if [ -x "/usr/bin/vim" ]; then
+        export SVN_EDITOR="/usr/bin/vim"
+    else
+        if [ -x "/usr/bin/vi" ]; then
+            export SVN_EDITOR="/usr/bin/vi"
+        else
+            if [ -x "/usr/bin/nano" ]; then
+                export SVN_EDITOR="/usr/bin/nano"
+            fi
+        fi
+    fi
+else
+    if [ "${SVN_EDITOR}" == "" ]; then
+        export SVN_EDITOR="${EDITOR}"
+    fi
+fi
+debugValue SVN_EDITOR 9
+
+SVN_ARGS=""
+
+if [ "${SVN_WHO}" != "" ] && [ "${HOSTNAME}" != "" ]; then
+    if [ "${Apex_User}" = "" ]; then
+        export Apex_User=${SVN_WHO}@${HOSTNAME}
+    fi
+    if [ "${Base_User}" = "" ]; then
+        export Base_User=${SVN_WHO}@${HOSTNAME}
+    fi
+fi
+
+# "special", enhanced svn subcommands; do these first then end
+
+if [ "$1" == "base" ]; then
+    svnApex
+    svnStop "base"
+fi
+
+if [ "$1" == "perm" ] || [ "$1" == "perms" ] || [ "$1" == "owner" ] || [ "$1" == "group" ] || [ "$1" == "mode" ]; then
+    svnPerms $@
+    svnStop "perms"
+fi
+
+if [ "$1" == "stop" ]; then
+    svnStop "stop"
+fi
+
+if [ "$1" == "who" ]; then
+    svnWho
+    svnStop "who"
+fi
+
+# normal svn subcommands
+
+if [ "${Debug}" == "" ] || [ "${Debug}" == "0" ]; then
+    SVN_SSH_DEBUG="-q"
+else
+    SVN_SSH_DEBUG="-vvv"
+fi
+debug "SVN_SSH_DEBUG=${SVN_SSH_DEBUG} (${Debug})" 1
+
+export SVN_SSH="ssh ${SVN_SSH_DEBUG} -o 'SendEnv Apex_User' -o 'SendEnv Base_User'"
+
+if [ "${SVN_WHO}" == "${LOG_NAME}" ] || [ "${SVN_WHO}" == "${USER}" ]; then
+
+    # don't interfere (much) with normal (non-su(do)) users
+
+    debugValue SVN_BIN 10
+    debugValue SVN_SSH 10
+
+    # do exactly what was asked
+    ${SVN_BIN} "$@"
+    exit $?
+fi
+
+if [ ${#SSH_AUTH_SOCK} -eq 0 ]; then
+
+        # interfere (a little) with normal (non-su(do)) users that aren't using ssh agent
+
+        SSH_WARNING=0
+        SVN_SSH_CONFIG="$(eval readlink -f ~${SVN_WHO}/.subversion/SVN_SSH.config)"
+        SSH_WARNING_CONFIG="${SVN_SSH_CONFIG}"
+
+        if [ -r "${SVN_SSH_CONFIG}" ]; then
+            SVN_SSH_HOST_CONFIG=$(grep ^IdentityFile "${SVN_SSH_CONFIG}")
+
+            if [ "${SVN_SSH_HOST_CONFIG}" == "" ]; then
+                SSH_WARNING=1
+            fi
+
+            export SVN_SSH="ssh ${SVN_SSH_DEBUG} -o 'SendEnv Apex_User' -o 'SendEnv Base_User' -F ${SVN_SSH_CONFIG}"
+        else
+            SVN_SSH_CONFIG="$(eval readlink -f ~/.ssh/config)"
+
+            if [ -r "${SVN_SSH_CONFIG}" ]; then
+                SVN_HOST_CONFIG=$(grep ^IdentityFile "${SVN_SSH_CONFIG}")
+
+                if [ "${SVN_HOST_CONFIG}" == "" ]; then
+                    SSH_WARNING=1
+                fi
+            else
+                SSH_WARNING=1
+            fi
+        fi
+
+        if [ ${SSH_WARNING} -eq 1 ]; then
+
+            SVN_HOST=$(${SVN_BIN} info 2> /dev/null | grep ^URL: | grep svn+ssh | awk -F\/ '{print $3}' | awk -F\@ '{print $2}')
+
+            if [ "${SVN_HOST}" != "" ] && [ "${SSH_WARNING_CONFIG}" != "" ]; then
+
+                warning "svn+ssh won't work correctly; you're trying to use svn from a different user than you logged in with"
+
+                echo "To get rid of this warning;"
+                echo
+                echo "1) ensure ${SSH_WARNING_CONFIG} has content similar to the following:"
+                echo
+                echo "Host ${SVN_HOST}"
+                echo "User ${SVN_WHO}"
+                echo "IdentityFile $(dirname $(dirname "${SSH_WARNING_CONFIG}"))/.ssh/id_ed25519"
+                echo
+
+            fi
+        fi
+fi
+
+debugValue SVN_BIN 10
+debugValue SVN_SSH 10
+
+# still do exactly what was asked
+${SVN_BIN} "$@"
+exit $?

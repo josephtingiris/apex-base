@@ -1,0 +1,14 @@
+#!/bin/bash
+
+set -f
+
+YES_FLAG=0
+if [ "$1" == "-y" ] || [ "$1" == "--yes" ]; then YES_FLAG=1; fi
+
+for svnrevert in `svn stat | egrep -e "^D|^M|\ C\ |^ D|^ M" | awk '{print $NF}'`; do
+    echo "reverting $svnrevert ..."
+    if [ $YES_FLAG -eq 1 ]; then
+        svn revert --depth infinity "$svnrevert"
+    fi
+    echo
+done

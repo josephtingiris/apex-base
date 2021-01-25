@@ -1,0 +1,14 @@
+#!/bin/bash
+
+set -f
+
+YES_FLAG=0
+if [ "$1" == "-y" ] || [ "$1" == "--yes" ]; then YES_FLAG=1; fi
+
+for svnresolve in `svn stat | egrep -e "^C|\ C\ |^ C" | cut -c 8-`; do
+    echo "resolving $svnresolve ..."
+    if [ $YES_FLAG -eq 1 ]; then
+        svn resolve --accept working "$svnresolve"
+    fi
+    echo
+done

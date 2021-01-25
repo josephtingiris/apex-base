@@ -1,0 +1,14 @@
+#!/bin/bash
+
+set -f
+
+YES_FLAG=0
+if [ "$1" == "-y" ] || [ "$1" == "--yes" ]; then YES_FLAG=1; fi
+
+for svnadd in `svn stat | grep \^\? | awk '{print $2}'`; do
+    echo "adding $svnadd ..."
+    if [ $YES_FLAG -eq 1 ]; then
+        svn add "$svnadd"
+    fi
+    echo
+done

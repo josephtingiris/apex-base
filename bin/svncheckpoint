@@ -1,0 +1,7 @@
+#!/bin/bash
+
+if [ "$1" != "" ]; then
+    message=" - $@"
+fi
+
+svn commit -m "$(logname)@$HOSTNAME:$(pwd) checkpoint${message}"
