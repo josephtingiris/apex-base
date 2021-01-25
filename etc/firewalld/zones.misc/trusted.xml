@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<zone target="ACCEPT">
+  <short>Trusted</short>
+  <description>Only private networks are trusted.</description>
+  <source address="127.0.0.0/8"/>
+  <source address="10.0.0.0/8"/>
+  <source address="192.168.0.0/16"/>
+  <source address="172.16.0.0/12"/>
+  <source address="fe80::/64"/>
+  <source address="fcc0:a812::/64"/>
+  <source address="fcc0:a818::/64"/>
+  <source address="2600:3c02::/64"/>
+</zone>
