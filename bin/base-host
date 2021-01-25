@@ -1,0 +1,211 @@
+#!/bin/sh
+
+# 20190116, jtingiris
+
+Default_Environment="prod"
+
+Supported_Environments=()
+Supported_Environments+=(${Default_Environment})
+Supported_Environments+=(dev)
+Supported_Environments+=(qa)
+Supported_Environments+=(rep)
+Supported_Environments+=(stg)
+Supported_Environments+=(test)
+
+# LOCALITY[-ACCOUNT-][dev/qa/prod/stg/test]SERVICE#[-][INTERFACE] # max 63 chars
+
+# [LOCALITY-]                     = 0-4 chars [must have trailing dash '-']
+# [ACCOUNT-]                      = 0-4 chars [must have trailing dash '-']
+# [dev/qa/prod/rep/stg/test]      = 0-4 chars, required for non-production
+# SERVICE                         = 2-32 chars, required (must be one of the supported host_environments)
+# [#]                             = 0-4 chars
+# [-INTERFACE]                    = 0-15 chars
+# [.DOMAIN]                       = subject to change
+
+baseHost() {
+    local host_input="$1"
+    if [ ${#host_input} -eq 0 ]; then
+        return 1
+    fi
+
+    local internal_vars=()
+    internal_vars+=(host_input)
+    internal_vars+=(host_environment_found)
+    internal_vars+=(host_environment_host_service_index)
+    internal_vars+=(host_name1)
+    internal_vars+=(host_name2)
+    internal_vars+=(host_name3)
+    internal_vars+=(host_name4)
+    internal_vars+=(return_code)
+
+    local vars=()
+    vars+=(host_name)
+    vars+=(host_locality)
+    vars+=(host_account)
+    vars+=(host_environment)
+    vars+=(host_service)
+    vars+=(host_service_index)
+    vars+=(host_interface)
+    vars+=(host_domain_name)
+
+    local var
+    for var in ${internal_vars[@]} ${vars[@]}; do
+        local ${var}
+    done
+    unset -v var
+
+    return_code=1
+
+    host_name=${host_input%%.*}
+
+    [ "${host_name}" != "${host_input}" ] && host_domain_name=${host_input#*.}
+
+    # faster than awk ...
+    host_name1=${host_name%%-*}
+    host_name2=${host_name#*-} && host_name2=${host_name2%-*} && host_name2=${host_name2%%-*}
+    host_name3=${host_name#*-} && host_name3=${host_name3#*-} && host_name3=${host_name3%%-*}
+    host_name4=${host_name##*-}
+    [ "${host_name4}" == "${host_name3}" ] && host_name4=""
+    [ "${host_name3}" == "${host_name2}" ] && host_name3=""
+    [ "${host_name2}" == "${host_name1}" ] && host_name2=""
+
+    if [ "${host_name}" == "${HOSTNAME}" ] || [ "${host_name1}" == "${HOSTNAME}" ] || [ "${host_name2}" == "${HOSTNAME}" ] || [ "${host_name3}" == "${HOSTNAME}" ] || [ "${host_name4}" == "${HOSTNAME}" ]; then
+        if [ ${#host_name4} -gt 0 ] && [ -e "/sys/class/net/${host_name4}" ]; then
+            host_interface="${host_name4}"
+        else
+            if [ ${#host_name3} -gt 0 ] && [ -e "/sys/class/net/${host_name3}" ]; then
+                host_interface="${host_name3}"
+            else
+                if [ ${#host_name2} -gt 0 ] && [ -e "/sys/class/net/${host_name2}" ]; then
+                    host_interface="${host_name2}"
+                else
+                    if [ ${#host_name1} -gt 0 ] && [ -e "/sys/class/net/${host_name1}" ]; then
+                        host_interface="${host_name1}"
+                    else
+                        if [ ${#host_name} -gt 0 ] && [ -e "/sys/class/net/${host_name}" ]; then
+                            host_interface="${host_name}"
+                        fi
+                    fi
+                fi
+            fi
+        fi
+    fi
+
+    if [ ${#host_name1} -gt 0 ] && [ ${#host_name2} -gt 0 ] && [ ${#host_name3} -gt 0 ] && [ ${#host_name4} -gt 0 ]; then
+        host_locality=${host_name1}
+        host_account=${host_name2}
+        host_environment_host_service_index=${host_name3}
+        host_interface=${host_name4}
+        return_code=0
+    else
+        if [ ${#host_name1} -gt 0 ] && [ ${#host_name2} -gt 0 ] && [ ${#host_name3} -gt 0 ] && [ ${#host_name4} -eq 0 ]; then
+            host_locality=${host_name1}
+            if [ ${#host_name2} -gt 4 ]; then
+                host_environment_host_service_index=${host_name2}
+                [ -z "${host_interface}" ] && host_interface=${host_name3}
+                return_code=0
+            else
+                host_account=${host_name2}
+                host_environment_host_service_index=${host_name3}
+            fi
+        else
+            if [ ${#host_name1} -gt 0 ] && [ ${#host_name2} -gt 0 ] && [ ${#host_name3} -eq 0 ] && [ ${#host_name4} -eq 0 ]; then
+                if [ ${#host_name1} -gt 4 ]; then
+                    host_environment_host_service_index=${host_name1}
+                    [ -z "${host_interface}" ] && host_interface=${host_name2}
+                else
+                    host_environment_host_service_index=${host_name2}
+                    host_locality=${host_name1}
+                fi
+            else
+                if [ ${#host_name1} -gt 0 ] && [ ${#host_name2} -eq 0 ] && [ ${#host_name3} -eq 0 ] && [ ${#host_name4} -eq 0 ]; then
+                    host_environment_host_service_index=${host_name1}
+                fi
+            fi
+        fi
+    fi
+
+    host_environment_found=1
+    if [ ${#host_environment_host_service_index} -gt 0 ]; then
+        for host_environment in ${Supported_Environments[@]}; do
+            if [ "${host_environment_host_service_index:0:${#host_environment}}" == "${host_environment}" ]; then
+                host_environment_found=0
+                host_service=${host_environment_host_service_index:${#host_environment}:${#host_environment_host_service_index}-${#host_environment}}
+                break
+            fi
+        done
+        [ ${host_environment_found} -eq 1 ] && host_environment="${Default_Environment}" && host_service=${host_environment_host_service_index}
+    fi
+
+    if [ ${#host_service} -gt 0 ]; then
+        host_service_index=${host_service:${#host_service}-4:${#host_service}-4} # only digits from the last 4 characters are valid
+        host_service_index=${host_service//[^0-9]}
+        host_service=${host_service:0:${#host_service}-${#host_service_index}}
+    fi
+
+    local var
+    for var in ${vars[@]}; do
+        baseHostOutput "${var}" "${!var}"
+    done
+    unset -v var
+
+    local var
+    for var in ${internal_vars[@]} ${vars[@]}; do
+        unset -v ${var}
+    done
+    unset -v var
+
+    return ${return_code}
+}
+
+baseHostOutput() {
+    local variable="${1}"
+    local value="${2}"
+
+    if [ ${#variable} -eq 0 ] || [ ${#value} -eq 0 ]; then
+        return 1
+    fi
+
+    if [ "${0}" == "${BASH_SOURCE}" ]; then
+        printf "%-32s = %s\n" "${variable}" "${value}"
+    else
+        # export
+        local -u variable="${1}"
+        eval "export BASE_${variable}=${value}"
+    fi
+}
+
+# Main
+
+if [ "${#1}" -gt 0 ]; then
+    Input="${1}"
+else
+    Input="${HOSTNAME}"
+fi
+
+if [ "${0}" == "${BASH_SOURCE}" ]; then
+    if [ "${Input}" != "test" ]; then
+        baseHost ${Input}
+    else
+        # tests
+        Names=()
+        Names+=(vip)
+        Names+=(dt-eth0)
+        Names+=(t0-eth0)
+        Names+=(atl-devwebapp01)
+        Names+=(atl-act-nfs01)
+        Names+=(atl-nfs01-eth0)
+        Names+=(atl-t1-eth0)
+        Names+=(atl-devwebapp01-eth0)
+        Names+=(atl-act-devwebapp01)
+        Names+=(atl-act-devwebapp01.example.com)
+        #Names+=(atl-act-devwebapp01-eth0)
+
+        for Name in ${Names[@]}; do
+            baseHost ${Name}
+            echo
+        done
+    fi
+else
+    baseHost ${Input}
+fi
