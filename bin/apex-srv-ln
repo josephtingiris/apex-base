@@ -1,0 +1,31 @@
+#!/bin/bash
+
+# begin Apex.bash.include
+
+if [ "$Debug" == "" ]; then
+    Debug=0
+fi
+
+Apex_Bash="/apex/include/Apex.bash"
+if [ ! -r "$Apex_Bash" ]; then
+    echo "$Apex_Bash not readable"
+    exit 1;
+fi
+source "$Apex_Bash"
+
+# end Apex.bash.include
+
+echo here=$(pwd)
+apex_srvs="/net/t1/apex/srv /net/t0/apex/srv"
+for apex_srv in $apex_srvs; do
+    if  [ -d "$apex_srv" ]; then
+        while read apexsrvln; do
+            echo "+ $apexsrvln"
+            if [ -f "$apexsrvln" ] || [ -h "$apexsrvln" ]; then
+                rm "$apexsrvln" 
+            fi
+            ln -s "${apex_srv}/$apexsrvln" "$apexsrvln"
+        done <<< "$(ls -1 "$apex_srv")"
+        unset -v apexsrvln
+    fi
+done

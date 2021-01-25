@@ -1,0 +1,153 @@
+#!/bin/bash
+
+# jtingiris
+
+# begin base.bash.include
+
+DEBUG=0
+
+PATH_SHELL=$PATH
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+
+INCLUDE_FILE="base.bash"
+INCLUDE_FOUND=0
+INCLUDE_PATHS=("$(pwd)" "$(dirname $0)")
+
+for ((INCLUDE_COUNTER=0; INCLUDE_COUNTER < ${#INCLUDE_PATHS[@]}; INCLUDE_COUNTER++)); do
+
+    INCLUDE_PATH=${INCLUDE_PATHS[$INCLUDE_COUNTER]}
+
+    if [ $INCLUDE_FOUND -eq 1 ]; then break; fi
+
+    while [ ! -z "$INCLUDE_PATH" ]; do
+        if [ "$INCLUDE_PATH" == "." ]; then INCLUDE_PATH=$(pwd -L .); fi
+        if [ "$INCLUDE_PATH" == "/" ]; then break; fi
+        if [ -r "$INCLUDE_PATH/include/$INCLUDE_FILE" ] && [ ! -d "$INCLUDE_PATH/include/$INCLUDE_FILE" ]; then
+            INCLUDE_FOUND=1
+            source "$INCLUDE_PATH/include/$INCLUDE_FILE"
+            Debug "sourced $INCLUDE_PATH/include/$INCLUDE_FILE" 100
+            break
+        else
+            INCLUDE_PATH=$(dirname "$INCLUDE_PATH")
+        fi
+    done
+done
+if [ $INCLUDE_FOUND -ne 1 ]; then echo "$INCLUDE_FILE file not found"; exit 1; fi
+if [ "$BASE_INCLUDE" == "" ]; then echo "$INCLUDE_FILE file invalid"; exit 1; fi
+unset INCLUDE_COUNTER INCLUDE_PATH INCLUDE_FILE
+
+# end base.bash.include
+
+function Usage() {
+
+    Debug_Function $@
+
+    local note="$1"
+
+    # begin function logic
+
+    echo
+    echo "usage: $0 <options>"
+    echo
+    echo "options:"
+    echo
+    # these are handled in base.bash; useful to know though ...
+    echo "  -D | --debug [level]           = print debug messages (less than) [level]"
+    echo "  -H | --help                    = print this message"
+    echo "  -V | --version                 = print version"
+    echo
+    # these must be handled in this script; please keep usage messages accurate
+    echo "  --yes                          = answer yes to all questions (automate)"
+    echo
+
+    if [ "$note" != "" ]; then
+        echo "NOTE: $note"
+        echo
+    fi
+
+    # end function logic
+
+    Debug_Function $@
+
+    Stop 1
+
+}
+
+# Validation Logic
+
+# Options Logic
+
+# call the base Options function (to process --debug, -debug, --help, -help, --usage, -usage, --verbose, -verbose)
+Options $@
+
+# expand upon the base Options function (careful, same named switches will be processed twice)
+
+# for each command line argument, evaluate them case by case, process them, and shift to the next
+
+for ((ARGUMENT=1; ARGUMENT <= $ARGUMENTS_TOTAL; ARGUMENT++)); do
+    case "$1" in
+    -e | --example | -example)
+        EXAMPLE_FLAG=1
+        EXAMPLE="$2"
+        if [ "$EXAMPLE" != "" ] && [ ${EXAMPLE:0:1} == "-" ]; then
+            EXAMPLE=""
+        fi
+        if [ "$EXAMPLE" == "" ]; then
+            Usage "$1 argument requires a given value"
+        else
+            declare EXAMPLE=$2
+            Debug_Variable EXAMPLE 4 "$1 flag was set"
+            shift
+        fi
+        ;;
+    -y | --yes | -yes)
+        YES_FLAG=1
+        Debug_Variable YES_FLAG 4 "$1 flag was set"
+        ;;
+    *)
+        # unknown flags
+        if [ "$1" != "" ] && [ $OPTION -eq 0 ]; then
+            echo "unknown flag '$1'"
+            Stop 2 # not absolutely necessary, but does enforce proper usage
+        fi
+        ;;
+    esac
+    shift
+done
+
+#echo "ARGUMENTS=$ARGUMENTS"
+
+# e.g., if there are no arguments, echo a usage message and/or exit
+#if [ $ARGUMENTS_TOTAL -eq 0 ]; then Usage; fi
+
+# Main Logic
+
+Start
+
+AFK_THRESHOLD="day"
+AFK_TTYS=$(/bin/w -i | awk '{print $2" "$5}' | grep $AFK_THRESHOLD | grep -v :0 | awk '{print $1}')
+if [ "$AFK_TTYS" == "" ]; then
+    echo "$(date) : $(hostname) : no qualifying terminals have been afk for more than a $AFK_THRESHOLD"
+else
+
+    for AFK_TTY in $AFK_TTYS; do
+        echo "$(date) : $(hostname) : AFK_TTY = $AFK_TTY"
+        echo
+        AFK_WHO=$(/bin/w -i | grep $AFK_TTY | awk '{print $1}' | sort -u)
+        /bin/w -i | grep $AFK_TTY | sort -u
+        echo
+        pgrep -a -t $AFK_TTY
+        echo
+        Question "kill all processes associated with $AFK_WHO $AFK_TTY"
+        if [ "$QUESTION_FLAG" -eq 1 ]; then
+            echo > /dev/$AFK_TTY 2> /dev/null
+            echo "NOTICE: This terminal is being killed because it has been afk for more than a $AFK_THRESHOLD" > /dev/$AFK_TTY 2> /dev/null
+            echo > /dev/$AFK_TTY 2> /dev/null
+            echo "killing all processes associated with $AFK_TTY" 2> /dev/null
+            pkill -9 -t $AFK_TTY
+        fi
+        echo
+    done
+fi
+
+Stop 0

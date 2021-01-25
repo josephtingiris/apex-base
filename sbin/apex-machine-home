@@ -1,0 +1,155 @@
+#!/bin/bash
+
+# begin Apex.bash.include
+
+if [ "$Debug" == "" ]; then
+    Debug=0
+fi
+
+Apex_Bash="/apex/include/Apex.bash"
+if [ ! -r "$Apex_Bash" ]; then
+    echo "$Apex_Bash not readable"
+    exit 1;
+fi
+source "$Apex_Bash"
+
+# end Apex.bash.include
+
+Debug=5
+
+apexStart
+
+if [ ! -d "$Machine_Dir" ]; then
+    aborting "$Machine_Dir directory not found"
+fi
+
+Debug=5
+
+function machineHome() {
+    user_dir="$1"
+    user="$2"
+    group="$3"
+
+    if [ ! -w "$user_dir" ]; then
+        return
+    fi
+
+    if [ "$user" == "" ]; then
+        user=$(basename "$user_dir")
+    fi
+
+    if [ "$group" == "" ]; then
+        group="$user"
+    fi
+
+    debugValue user_dir 33
+    debugValue user 33
+    debugValue group 33
+
+    echo "user_dir = $user_dir ($user:$group)"
+    echo
+
+    cd "$user_dir"
+
+    mkdir -p .ssh
+
+    shared_root_files="
+    $Machine_Dir/*/root/.ssh/authorized_keys
+    $Machine_Dir/*/root/.inputrc
+    "
+    shared_root_files=""
+
+    shared_root=0
+    for shared_root_file in $shared_root_files; do
+
+        for ext in "$user" "$group" ""; do
+
+            if [ "$ext" == "" ]; then
+                shared_root_file_ext="${shared_root_file}"
+            else
+                shared_root_file_ext="${shared_root_file}.${ext}"
+            fi
+            debugValue shared_root_file_ext 11
+
+            if [ -f "$shared_root_file_ext" ]; then
+
+                shared_root_user_file="${user_dir}/$(echo "$shared_root_file_ext" | awk -F\/root\/ '{print $NF}' | sed -e "s#.$user##g"  -e "s#.$group##g")"
+                debugValue shared_root_user_file 10 "$shared_root_file_ext"
+
+                if [ -f "$shared_root_user_file" ]; then
+
+                    diff "$shared_root_file_ext" "$shared_root_user_file" &> /dev/null
+                    if [ $? -ne 0 ]; then
+                        echo "+ [$user:$group] shared root COPY $shared_root_file_ext -> $shared_root_user_file"
+                        cp "$shared_root_file_ext" "$shared_root_user_file"
+                    else
+                        echo "+ [$user:$group] shared root OK $shared_root_user_file"
+                    fi
+
+                    shared_root=1
+                    break
+
+                fi
+
+            fi
+
+        done
+
+    done
+
+    if [ $shared_root -eq 1 ]; then
+        echo
+    fi
+
+    svn add . --force
+
+    svn propset owner "$user" . &> /dev/null
+    svn propset group "$group" . &> /dev/null
+    svn propset mode 0700 . &> /dev/null
+    svn propset mode 0700 .ssh &> /dev/null
+
+}
+
+cd "$Machine_Dir"
+
+while read Root_Dir_Readlink; do
+    Root_Dir="$(readlink -f "$Root_Dir_Readlink")"
+
+    echo "Root_Dir = $Root_Dir"
+    echo
+
+    machineHome "$Root_Dir"
+
+    echo
+
+done <<< "$(find "$Machine_Dir" -type d -name root | sort)"
+
+while read Home_Dir_Readlink; do
+    Home_Dir="$(readlink -f "$Home_Dir_Readlink")"
+
+    echo "Home_Dir = $Home_Dir"
+    echo
+
+    cd "$Home_Dir"
+
+    svn add . --force
+
+    svn propset owner root . &> /dev/null
+    svn propset group root . &> /dev/null
+    svn propset mode 0755 . &> /dev/null
+
+    User_Dirs=$(ls -1 | sort)
+    for User_Dir in $User_Dirs; do
+
+        machineHome "${Home_Dir}/${User_Dir}"
+
+    done
+
+    echo
+done <<< "$(find "$Machine_Dir" -type d -name home | sort)"
+
+cd "$Machine_Dir"
+
+svn perms
+
+apexFinish

@@ -1,0 +1,96 @@
+#!/bin/bash
+
+export RESTIC_PASSWORD_FILE=/root/etc/profile.d/restic.sh
+export RESTIC_REPOSITORY=sftp:restic@restic:repo
+
+PATH=/apex/sbin:/apex/bin:/sbin:/bin
+
+Basename_0=$(basename ${0})
+Dirname_0=$(dirname ${0})
+
+Restic=$(type -P restic)
+echo "Restic = ${Restic}"
+
+function addBackups() {
+    local policy="${1}"
+
+    if [ ${#policy} -eq 0 ]; then
+        return
+    fi
+
+    local policy_file="${Dirname_0}/../etc/${Basename_0}.${policy}"
+
+    if [ -r "${policy_file}" ]; then
+        while read line; do
+            if [ -e "${line}" ]; then
+                Backups+=("${line}")
+            fi
+        done <<< "$(cat "${policy_file}" | grep -v ^\# | awk -F\# '{print $1}')"
+    fi
+}
+
+if [ ! -x "${Restic}" ]; then
+    echo
+    echo "aborting ... can't find restic"
+    echo
+    exit 1
+fi
+
+if [ "${1}" == "" ]; then
+    Policy="weekly"
+else
+    Policy="${1}"
+fi
+
+Restic_Rc=1
+Restic_Tag="${Basename_0}-${Policy}"
+
+Date=$(date '+%Y%m%d')
+Date_Tmp_File=/var/tmp/${Basename_0}.date.${Date}.tmp
+Hour=$(date '+%-H')
+Hour_Tmp_File=/var/tmp/${Basename_0}.hour.${Date}.${Hour}.tmp
+Week=$(date '+%-g')
+Week_Tmp_File=/var/tmp/${Basename_0}.week.${Week}.tmp
+
+Backups=()
+
+if [ "${Policy}" == "daily" ]; then
+    Tmp_File=${Date_Tmp_File}
+fi
+
+if [ "${Policy}" == "hourly" ]; then
+    Tmp_File=${Hour_Tmp_File}
+fi
+
+if [ "${Policy}" == "weekly" ]; then
+    Tmp_File=${Week_Tmp_File}
+fi
+
+addBackups "${Policy}"
+
+for Backup in "${Backups[@]}"; do
+    doBackup=1 # false
+
+    if [ -e "${Tmp_File}" ]; then
+        if [ -r "${Tmp_File}" ]; then
+            if ! (grep -q ^"${Backup}" "${Tmp_File}"); then
+                doBackup=0 # true
+            #else
+                #echo "[$(date)] Backup = ${Backup} (already backed up ${Policy})"
+            fi
+        fi
+    else
+        doBackup=0 # true
+    fi
+
+    if [ ${doBackup} -eq 0 ]; then
+        echo "[$(date)] Backup = ${Backup}"
+        $Restic backup --tag "${Restic_Tag}" "${Backup}"
+        Restic_Rc=$?
+        if [ ${Restic_Rc} -eq 0 ]; then
+            echo "${Backup}" >> "${Tmp_File}"
+        fi
+    fi
+done
+
+find /var/tmp -name "${Basename_0}*tmp" -mtime +7 | xargs -r rm
