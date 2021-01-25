@@ -1,0 +1,34 @@
+#!/bin/bash
+
+pushd . &> /dev/null
+
+cd /base
+
+svn up && svn perms && svn st | grep .
+if [ $? -eq 0 ]; then
+    echo
+    echo "ERROR: fix that & re-run ..."
+    echo
+    exit 1
+else
+    echo "svn is clean ..."
+    echo
+    git status | egrep -qe 'Changes|Untracked'
+    if [ $? -eq 0 ]; then
+        git pull
+        if [ $? -eq ne ]; then
+            GIT_SAVE_BRANCH="base=${HOSTNAME}-$(date +%Y%m%d%H%M%S)"
+            echo "GIT_SAVE_BRANCH=${GIT_SAVE_BRANCH}"
+            echo
+            git checkout master
+            git branch ${GIT_SAVE_BRANCH}
+            git fetch --all
+            git reset --hard origin/master
+        fi
+    fi
+    git status
+fi
+
+popd
+
+exit

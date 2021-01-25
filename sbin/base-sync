@@ -1,0 +1,234 @@
+#!/bin/bash
+
+# This script will ... rsync /base to other machines (identified in /base/etc/base-sync.conf)
+
+# 20160825, jtingiris
+
+# begin base.bash.include
+
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+
+INCLUDE_FILE="base.bash"
+INCLUDE_FOUND=0
+INCLUDE_PATHS="$(dirname $0) $(pwd)"
+for INCLUDE_PATH in $INCLUDE_PATHS; do
+    if [ $INCLUDE_FOUND -eq 1 ]; then break; fi
+    while [ ! -z "$INCLUDE_PATH" ]; do
+        if [ "$INCLUDE_PATH" == "." ]; then INCLUDE_PATH=$(pwd -L .); fi
+        if [ "$INCLUDE_PATH" == "/" ]; then break; fi
+        if [ -r "$INCLUDE_PATH/include/$INCLUDE_FILE" ] && [ ! -d "$INCLUDE_PATH/include/$INCLUDE_FILE" ]; then
+            INCLUDE_FOUND=1
+            source "$INCLUDE_PATH/include/$INCLUDE_FILE"
+            Debug "sourced $INCLUDE_PATH/include/$INCLUDE_FILE" 500
+            break
+        else
+            INCLUDE_PATH=`dirname "$INCLUDE_PATH"`
+        fi
+    done
+done
+if [ $INCLUDE_FOUND -ne 1 ]; then echo "$INCLUDE_FILE file not found"; exit 1; fi
+if [ "$BASE_INCLUDE" == "" ]; then echo "$INCLUDE_FILE file invalid"; exit 1; fi
+unset INCLUDE_PATH INCLUDE_FILE
+
+# end base.bash.include
+
+# GLOBAL_VARIABLES
+
+# explicit declarations
+
+declare -x DEFAULT_DATE=`date +%Y%m%d`
+
+declare -x VERSION="0.1";
+
+declare -i FROM_FLAG=0
+declare -i YES_FLAG=0
+
+# Function_Names
+
+function Example() {
+    Debug_Function $@
+
+    # begin function logic
+
+    local example_arg="$1"
+    local example_variable="example variable"
+
+    Debug_Variable example_variable 2
+
+    echo "example_arg=$example_arg, example_variable=$example_variable"
+
+    # end function logic
+
+    Debug_Function $@
+}
+
+function Usage() {
+    Debug_Function $@
+
+    local note="$1"
+
+    # begin function logic
+
+    echo
+    echo "usage: $0 [hostname]"
+    echo
+    echo "options:"
+    echo
+    # these are handled in base.bash; useful to know though ...
+    echo "  -D | --debug [level]           = print debug messages (less than) [level]"
+    echo "  -H | --help                    = print this message"
+    echo "  -V | --version                 = print version"
+    echo
+    # these must be handled in this script; please keep usage messages accurate
+    echo "  -f | --from <hostname>         = sync from given hostname (default=localhost)"
+    echo
+    echo "  -y | --yes                     = answer 'yes' to all questions (automate)"
+    echo
+
+    if [ "$note" != "" ]; then
+        echo "NOTE: $note"
+        echo
+    fi
+
+    # end function logic
+
+    Debug_Function $@
+
+    Stop 1
+}
+
+# Validation Logic
+
+# Options Logic
+
+# call the base Options function (to process --debug, -debug, --help, -help, --usage, -usage, --verbose, -verbose)
+Options $@
+
+# expand upon the base Options function (careful, same named switches will be processed twice)
+
+# for each command line argument, evaluate them case by case, process them, and shift to the next
+for ((ARGUMENT=1; ARGUMENT <= $ARGUMENTS_TOTAL; ARGUMENT++)); do
+    case "$1" in
+        -f | --from | -from)
+            FROM_FLAG=1
+            FROM="$2"
+            if [ "$FROM" != "" ] && [ ${FROM:0:1} == "-" ]; then
+                FROM=""
+            fi
+            if [ "$FROM" == "" ]; then
+                Usage "$1 argument requires a given value"
+            else
+                FROM=$2
+                Debug_Variable FROM 4 "$1 flag was set"
+                shift
+            fi
+        ;;
+        -y | --yes | -yes)
+            YES_FLAG=1
+            Debug_Variable YES 4 "$1 flag was set"
+        ;;
+        *)
+            # unknown flags
+            if [ "$1" != "" ] && [ $OPTION -eq 0 ]; then
+                BASE_SYNC_HOSTS+=" $1"
+                #echo "unknown flag '$1'"
+                #Stop 2 # not absolutely necessary, but does enforce proper usage
+            fi
+        ;;
+    esac
+    shift
+done
+
+#echo "ARGUMENTS=$ARGUMENTS"
+
+# e.g., if there are no arguments, echo a usage message and/or exit
+if [ $ARGUMENTS_TOTAL -eq 0 ]; then Usage; fi
+
+# Main Logic
+
+#DEBUG_FLAG=1
+#DEBUG=10
+
+Start
+
+# do something
+
+BASE_ETC="${BASE_DIR}/etc"
+
+if [ ! -d "$BASE_ETC" ]; then
+    Aborting "$BASE_ETC directory not found" 1
+fi
+
+BASE_SYNC_CONF="${BASE_ETC}/base-sync.conf"
+
+if [ ! -r "$BASE_SYNC_CONF" ]; then
+    Aborting "$BASE_SYNC_CONF file not found" 1
+fi
+
+if [ "$FROM" == "" ]; then
+    BASE_SYNC_FROM="localhost"
+else
+    BASE_SYNC_FROM="$FROM"
+fi
+ping -c 2 "$BASE_SYNC_FROM" &> /dev/null
+if [ $? -ne 0 ]; then
+    Aborting "can't ping $BASE_SYNC_HOST"
+fi
+Debug_Variable BASE_SYNC_FROM 10
+
+BASE_SYNC_GROUP=$(hostname | sed -e '/[0-9]*/s///g')
+Debug_Variable BASE_SYNC_GROUP 10
+
+BASE_SYNC_HOSTS=$(List_Unique "$BASE_SYNC_HOSTS")
+
+if [ "$BASE_SYNC_HOSTS" == "" ]; then
+    BASE_SYNC_HOSTS+=$(egrep -e "^${BASE_SYNC_GROUP}=|^${BASE_SYNC_GROUP}\ =" ${BASE_SYNC_CONF} | awk -F= '{print $NF}')
+    BASE_SYNC_HOSTS=$(List_Unique "$BASE_SYNC_HOSTS")
+fi
+
+if [ "$BASE_SYNC_HOSTS" == "" ]; then
+    Usage
+fi
+
+Debug_Variable BASE_SYNC_HOSTS 10
+
+BASE_RSYNC_ARGS="-avzp"
+BASE_RSYNC_ARGS+=" --delete-after"
+Debug_Variable BASE_RSYNC_ARGS 10
+
+for BASE_SYNC_HOST in $BASE_SYNC_HOSTS; do
+    ping -c 2 "$BASE_SYNC_HOST" &> /dev/null
+    if [ $? -ne 0 ]; then
+        echo "Skipping $BASE_SYNC_HOST; can't ping"
+        echo
+        continue
+    fi
+
+    if [ "${BASE_SYNC_FROM}" == "localhost" ] || [ "${BASE_SYNC_FROM}" == "127.0.0.1" ] || [ "${BASE_SYNC_FROM}" == "::1" ]; then
+        BASE_RSYNC_FROM="${BASE_DIR}/"
+    else
+        BASE_RSYNC_FROM="${BASE_SYNC_FROM}:${BASE_DIR}/"
+    fi
+    Debug_Variable BASE_RSYNC_FROM 10
+
+    if [ "${BASE_SYNC_HOST}" == "localhost" ] || [ "${BASE_SYNC_HOST}" == "127.0.0.1" ] || [ "${BASE_SYNC_HOST}" == "::1" ]; then
+        BASE_RSYNC_TO="${BASE_DIR}/"
+    else
+        BASE_RSYNC_TO="${BASE_SYNC_HOST}:${BASE_DIR}/"
+    fi
+    Debug_Variable BASE_RSYNC_TO 10
+
+    Question "Sync from $BASE_RSYNC_FROM to $BASE_RSYNC_TO"
+    if [ "$QUESTION_FLAG" -eq 1 ]; then
+        # yes
+        echo "Syncing from $BASE_RSYNC_FROM to $BASE_RSYNC_TO ... [YES]"
+        echo
+        $(which rsync) $BASE_RSYNC_ARGS "$BASE_RSYNC_FROM" "$BASE_RSYNC_TO"
+    else
+        echo "Skipping from $BASE_RSYNC_FROM to $BASE_RSYNC_TO ... [NO]"
+        echo
+    fi
+    echo
+done
+
+Stop 0

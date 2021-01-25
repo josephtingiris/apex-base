@@ -1,0 +1,212 @@
+#!/bin/bash
+
+# This script will ... updated /etc/sysconfig/network-scripts/ifcfg* files
+
+
+# begin Apex.bash.include
+
+if [ "$Debug" == "" ]; then
+    Debug=0
+fi
+
+Apex_Bashes="/apex/include/Apex.bash /base/include/Base.bash"
+for Apex_Bash in $Apex_Bashes; do
+    if [ -r "$Apex_Bash" ]; then
+        source "$Apex_Bash"
+        break
+    fi
+done
+
+if [ ! -r "$Apex_Bash" ]; then
+    echo "$Apex_Bash not readable"
+    exit 1;
+fi
+
+# end Apex.bash.include
+
+# Global_Variables
+
+# explicit declarations
+
+declare -x Version="0.1";
+
+declare -i Return_Code=0
+
+# functionNames
+
+function ifcfgNoname() {
+
+    debugFunction $@
+
+    # begin function logic
+
+    if [ ! -r /etc/sysconfig/network-scripts ]; then
+        aborting "/etc/sysconfig/network-scripts not readable"
+    fi
+
+    local noname_files=()
+    noname_files+=($(find /etc/sysconfig/network-scripts -type f -name "ifcfg-*"))
+    if [ -r /etc/sysconfig/network ] && [ -f /etc/sysconfig/network ]; then
+        noname_files+=(/etc/sysconfig/network)
+    fi
+
+    for noname_file in ${noname_files[@]}; do
+        echo "# ${noname_file}"
+        if [ ${Yes_Flag} -eq 0 ]; then
+            sed -i "/^#/d" "${noname_file}"
+            sed -i "/^DNS/d" "${noname_file}"
+            sed -i "/^DOMAIN/d" "${noname_file}"
+            sed -i "/^PEERDNS/d" "${noname_file}"
+            sed -i "/^IPV6_PEERDNS/d" "${noname_file}"
+            sed -i "/^ZONE/d" "${noname_file}"
+            sed -i "/\"/s///g" "${noname_file}"
+            sed -i "/=NO/s//=no/g" "${noname_file}"
+            sed -i "/=YES/s//=yes/g" "${noname_file}"
+            sed -i -Ee "s#^BONDING_OPTS=(.*)#BONDING_OPTS=\"\1\"#p" "${noname_file}"
+            echo "PEERDNS=no" >> "${noname_file}"
+            echo "IPV6_PEERDNS=no" >> "${noname_file}"
+            sort -u "${noname_file}" -o "${noname_file}"
+            sort -h "${noname_file}" -o "${noname_file}"
+        fi
+        cat "${noname_file}"
+        echo
+    done
+
+    if [ -r /etc/NetworkManager/NetworkManager.conf ] && [ -f /etc/NetworkManager/NetworkManager.conf ]; then
+        echo "# /etc/NetworkManager/NetworkManager.conf"
+        if [ ${Yes_Flag} -eq 0 ]; then
+            sed -i "/^dns=/Id" /etc/NetworkManager/NetworkManager.conf
+            sed -i "s#^\[main\]#\[main\]\ndns=none#g" /etc/NetworkManager/NetworkManager.conf
+        fi
+        grep -v "^#" /etc/NetworkManager/NetworkManager.conf
+        echo
+    fi
+
+    # end function logic
+
+    debugFunction $@
+
+}
+
+# Validation Logic
+
+dependency "date"
+
+# typically, upgrade before optionArguments, begin, etc
+
+# upgrade "$0" "/apex/bin /usr/local/bin"
+
+# optionArguments Logic
+
+# add usage help to the Apex_Usage array (before usage() is called for the first time [via optionArguments])
+
+Apex_Usage+=("-n | --nodns = check DNS & DOMAIN options from ifcfg files & NetworkManager.conf")
+Apex_Usage+=("-y | --yes   = check and remove DNS & DOMAIN options from ifcfg files & NetworkManager.conf")
+
+#Apex_Usage+=("-n | --multiple-optional [value(s)] = supports an argument with or without one or more [value(s)]")
+#Apex_Usage+=("-m | --mutiple <value(s)> = supports an argument with one or more <value(s)>")
+#Apex_Usage+=("-n | --multiple-optional [value(s)] = supports an argument with or without one or more [value(s)]")
+#Apex_Usage+=("-o | --one = supports only one argument without a value")
+#Apex_Usage+=("-s | --single <value> = supports only one argument with a single <value>")
+#Apex_Usage+=("-t | --single-optional [value(s)] = supports only one argument with or without a [value]")
+#Apex_Usage+=("") # blank link; seperator
+#Apex_Usage+=("-e | --example <value> = use the given example value")
+#Apex_Usage+=("=more help for the example flag")
+
+# call the optionArguments function (to process common options, i.e. --debug, --help, --usage, --yes, etc)
+
+optionArguments $@
+
+# expand upon the optionArguments function (careful, same named switches will be processed twice)
+
+# for each cli option (argument), evaluate them case by case, process them, and shift to the next
+
+declare -i Noname_Flag=1 # default off
+declare -i Yes_Flag=1
+
+#declare -i Example_Flag=1 # 0=true/on/yes, 1=false/off/no
+
+#declare -i Multiple_Flag=1 # default off
+#declare -i Multiple_Optional_Flag=1 # default off
+#declare -i One_Flag=1 # default off
+#declare -i Single_Flag=1 # default off
+#declare -i Single_Optional_Flag=1 # default off
+
+#declare -i Restart_Flag=1 # default off
+#declare -i Start_Flag=1 # default off
+#declare -i Status_Flag=1 # default off
+#declare -i Stop_Flag=1 # default off
+
+declare -i Option_Arguments_Index=0
+declare -i Option_Arguments_Shift=0
+for Option_Argument in ${Option_Arguments[@]}; do
+
+    if [ $Option_Arguments_Shift -eq 1 ]; then
+        ((Option_Arguments_Index++))
+        Option_Arguments_Shift=0
+        continue
+    fi
+
+    Option_Argument_Next="${Option_Arguments[$Option_Arguments_Index+1]}"
+
+    case "$Option_Argument" in
+
+    # supports only one argument without a value
+    -n | -nodns | --nodns | -noname | --noname)
+    if [ $Noname_Flag -eq 0 ]; then
+        usage "$Option_Argument may only be given once"
+    fi
+    if [ "$Option_Argument_Next" != "" ]; then
+        if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+            usage "$Option_Argument argument does not accept values"
+        fi
+    fi
+    Noname_Flag=0
+    debugValue Noname_Flag 2 "$Option_Argument flag was set"
+    ;;
+
+    # supports only one argument without a value
+    -y | --y | -yes | --yes)
+    if [ $Yes_Flag -eq 0 ]; then
+        usage "$Option_Argument may only be given once"
+    fi
+    Yes_Flag=0
+    debugValue Yes_Flag 2 "$Option_Argument flag was set"
+    ;;
+
+*)
+    # unsupported arguments
+    if [ "$Option_Argument" != "" ]; then
+        echo "unsupported argument '$Option_Argument'"
+    end 2
+fi
+;;
+
+esac
+
+((Option_Arguments_Index++))
+done
+unset Option_Argument_Next Option_Arguments_Index Option_Arguments_Shift
+
+# e.g., if there are no arguments, echo a usage message and/or exit
+
+if [ $Apex_Arguments_Count -eq 0 ]; then usage; fi
+if [ $Apex_Arguments_Count -eq 1 ] && [ $Debug_Flag -ne 1 ]; then usage; fi
+if [ $Apex_Arguments_Count -eq 2 ] && [ $Debug_Flag -ne 1 ] && [ "$Debug" != "" ]; then usage; fi
+
+# Main Logic
+
+begin
+
+if [ "$USER" != "root" ]; then
+    aborting "must be root"
+fi
+
+if [ ${Noname_Flag} -eq 0 ] || [ ${Yes_Flag} -eq 0 ]; then
+    ifcfgNoname
+    apexFinish $Return_Code
+fi
+
+usage
+
+end $Return_Code
