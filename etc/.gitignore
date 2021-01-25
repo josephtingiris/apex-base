@@ -1,3 +1,13 @@
+# environment specific
+aliases
+labl.d
+motd
+opt
+php.ini
+postfix
+NetworkManager
+
+# base installation specific
 account_name
 base-account-name
 domain_name
@@ -6,3 +16,4 @@ company_name
 base-company-name
 privacy_notice
 base-privacy_notice
+base-svnserve-dir
