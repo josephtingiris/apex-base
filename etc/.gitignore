@@ -1,11 +1,16 @@
 # environment specific
-aliases
+aliases*
+base*conf
+cron*
 labl.d
 motd
 opt
 php.ini
 postfix
 NetworkManager
+httpd.conf.d*
+!httpd.conf.d.public.httpsonly
+!httpd.conf.d.public.httpsonly.norewrite
 
 # base installation specific
 account_name
