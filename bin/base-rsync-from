@@ -1,6 +1,8 @@
 #!/bin/bash
 
-# Script to keep local directory sync'ed with remote directory
+# rsync wrapper
+
+# 20210126, joseph.tingiris@gmail.com
 
 function aborting() {
     echo
@@ -10,7 +12,9 @@ function aborting() {
 }
 
 function debugecho() {
-    echo "[DEBUG] : $@"
+    if [ ${#Debug} -gt 0 ]; then
+        echo "[DEBUG] : $@"
+    fi
 }
 
 function usage() {
@@ -95,7 +99,6 @@ debugecho "RSYNC         = ${RSYNC}"
 
 RSYNC_ARGS="--delete-during -aH -h -l --stats"
 RSYNC_ARGS="--delete -ahlxvzKHS --stats"
-RSYNC_ARGS="--delete -ahlxzKHS --stats"
 debugecho "RSYNC_ARGS    = ${RSYNC_ARGS}"
 
 BASENAME=$(basename $0)
