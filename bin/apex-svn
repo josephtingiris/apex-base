@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# This script 'enhances' the default behavior of svn 1.6 & 1.7
+# This script 'enhances' the default behavior of svn 1.x
 
+# 20210126, jtingiris, remove evals, made backward compatible
 # 20170705, jtingiris, simplified even more, even more less intrusive, faster, more portable
 # 20170129, jtingiris, greatly simplified, less intrusive, faster, portable
 # 20150318, jtingiris, created
@@ -437,25 +438,40 @@ fi
 debug "SVN_SSH_DEBUG=${SVN_SSH_DEBUG} (${Debug})" 1
 
 export SVN_SSH="ssh ${SVN_SSH_DEBUG} -o 'SendEnv Apex_User' -o 'SendEnv Base_User'"
+debugValue SVN_SSH 10
 
 if [ "${SVN_WHO}" == "${LOG_NAME}" ] || [ "${SVN_WHO}" == "${USER}" ]; then
 
     # don't interfere (much) with normal (non-su(do)) users
 
     debugValue SVN_BIN 10
-    debugValue SVN_SSH 10
 
     # do exactly what was asked
     ${SVN_BIN} "$@"
     exit $?
 fi
 
+unset SVN_WHO_HOME
+if [ "${LOGNAME}" == "root" ]; then
+    if [ ${#SVN_WHO} -gt 0 ]; then
+        SVN_WHO_HOME=$(bash -c "cd ~$(printf %q ${SVN_WHO}) && pwd")
+    fi
+else
+    SVN_WHO_HOME="${HOME}"
+fi
+
+if [ ! -d "${SVN_WHO_HOME}" ]; then
+    aborting "${SVN_WHO_HOME} directory not found"
+fi
+debugValue SVN_WHO_HOME 10
+
+SVN_SSH_CONFIG="${SVN_WHO_HOME}/.subversion/SVN_SSH.config"
+
 if [ ${#SSH_AUTH_SOCK} -eq 0 ]; then
 
         # interfere (a little) with normal (non-su(do)) users that aren't using ssh agent
 
         SSH_WARNING=0
-        SVN_SSH_CONFIG="$(eval readlink -f ~${SVN_WHO}/.subversion/SVN_SSH.config)"
         SSH_WARNING_CONFIG="${SVN_SSH_CONFIG}"
 
         if [ -r "${SVN_SSH_CONFIG}" ]; then
@@ -467,7 +483,7 @@ if [ ${#SSH_AUTH_SOCK} -eq 0 ]; then
 
             export SVN_SSH="ssh ${SVN_SSH_DEBUG} -o 'SendEnv Apex_User' -o 'SendEnv Base_User' -F ${SVN_SSH_CONFIG}"
         else
-            SVN_SSH_CONFIG="$(eval readlink -f ~/.ssh/config)"
+            SVN_SSH_CONFIG="${SVN_WHO_HOME}/.ssh/config"
 
             if [ -r "${SVN_SSH_CONFIG}" ]; then
                 SVN_HOST_CONFIG=$(grep ^IdentityFile "${SVN_SSH_CONFIG}")
@@ -490,7 +506,7 @@ if [ ${#SSH_AUTH_SOCK} -eq 0 ]; then
 
                 echo "To get rid of this warning;"
                 echo
-                echo "1) ensure ${SSH_WARNING_CONFIG} has content similar to the following:"
+                echo "1) ensure ~/.ssh/config or ${SSH_WARNING_CONFIG} has content similar to the following:"
                 echo
                 echo "Host ${SVN_HOST}"
                 echo "User ${SVN_WHO}"
@@ -501,9 +517,19 @@ if [ ${#SSH_AUTH_SOCK} -eq 0 ]; then
         fi
 fi
 
+debugValue SVN_ARGS 10
 debugValue SVN_BIN 10
 debugValue SVN_SSH 10
+debugValue SVN_SSH_CONFIG 10
 
-# still do exactly what was asked
-${SVN_BIN} "$@"
+if [ ${#SVN_SSH} -gt 0 ]; then
+    if [ -f "${SVN_SSH_CONFIG}" ]; then
+        ${SVN_BIN} --config-option "config:tunnels:ssh=${SVN_SSH} -F '${SVN_SSH_CONFIG}'" "$@"
+    else
+        ${SVN_BIN} --config-option "config:tunnels:ssh=${SVN_SSH}" "$@"
+    fi
+else
+    ${SVN_BIN} "$@"
+fi
+
 exit $?
