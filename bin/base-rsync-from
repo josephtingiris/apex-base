@@ -1,0 +1,155 @@
+#!/bin/bash
+
+# Script to keep local directory sync'ed with remote directory
+
+function aborting() {
+    echo
+    echo "[$(date)] aborting ... $@"
+    echo
+    exit 1
+}
+
+function debugecho() {
+    echo "[DEBUG] : $@"
+}
+
+function usage() {
+    echo
+    echo "$0 [user@][host:]<from directory> [user@][host:]<to directory> [log file]"
+    echo
+    exit 2
+}
+
+export PATH=/sbin:/bin:/usr/local/sbin:/usr/local/sbin
+
+if [ "$1" == "" ] || [ "$2" == "" ]; then
+    usage
+fi
+
+FROM="$1"
+debugecho "FROM          = ${FROM}"
+
+FROM_DIR="${FROM#*:}"
+
+FROM_HOST="${FROM%%:*}"
+FROM_HOST="${FROM_HOST#*@}"
+if [ "${FROM_HOST}" == "${FROM_DIR}" ]; then
+    FROM_HOST=""
+fi
+
+FROM_USER="${FROM%%:*}"
+FROM_USER="${FROM_USER%%@*}"
+if [ "${FROM_USER}" == "${FROM_DIR}" ]; then
+    FROM_USER=""
+else
+    if [ "${FROM_USER}" == "${FROM_HOST}" ]; then
+        FROM_USER="${USER}"
+    fi
+fi
+
+if [ ${#FROM_HOST} -eq 0 ] && [ ! -d "${FROM_DIR}" ]; then
+    aborting "from '${FROM_DIR}' directory not found"
+fi
+
+[ ${FROM_USER} ] && debugecho "FROM_USER     = ${FROM_USER}"
+[ ${FROM_HOST} ] && debugecho "FROM_HOST     = ${FROM_HOST}"
+[ "${FROM_DIR}" != "${FROM}" ] && debugecho "FROM_DIR      = ${FROM_DIR}"
+
+TO="$2"
+debugecho "TO            = ${TO}"
+
+TO_DIR="${TO#*:}"
+
+TO_HOST="${TO%%:*}"
+TO_HOST="${TO_HOST#*@}"
+if [ "${TO_HOST}" == "${TO_DIR}" ]; then
+    TO_HOST=""
+fi
+
+TO_USER="${TO%%:*}"
+TO_USER="${TO_USER%%@*}"
+if [ "${TO_USER}" == "${TO_DIR}" ]; then
+    TO_USER=""
+else
+    if [ "${TO_USER}" == "${TO_USER}" ]; then
+        TO_USER="${USER}"
+    fi
+fi
+
+[ ${TO_USER} ] && debugecho "TO_USER       = ${TO_USER}"
+[ ${TO_HOST} ] && debugecho "TO_HOST       = ${TO_HOST}"
+[ "${TO_DIR}" != "${TO}" ] && debugecho "TO_DIR        = ${TO_DIR}"
+
+LOGFILE=${3:-"/var/log/base-rsync-from.log"}
+
+debugecho "LOGFILE       = ${LOGFILE}"
+
+# main
+
+RSYNC=$(type -P rsync)
+if [ ! -x "${RSYNC}" ]; then
+    aborting "rsync not found executable"
+fi
+
+debugecho "RSYNC         = ${RSYNC}"
+
+RSYNC_ARGS="--delete-during -aH -h -l --stats"
+RSYNC_ARGS="--delete -ahlxvzKHS --stats"
+RSYNC_ARGS="--delete -ahlxzKHS --stats"
+debugecho "RSYNC_ARGS    = ${RSYNC_ARGS}"
+
+BASENAME=$(basename $0)
+PIDS=$(pidof -o '%PPID' -x ${BASENAME})
+if [ ${#PIDS} -gt 0 ]; then
+    aborting "there's another ${BASENAME} running (${PID_COUNT})"
+fi
+
+if [ ${#TO_HOST} -eq 0 ] && [ ! -d "${TO_DIR}" ]; then
+    mkdir -p "${TO_DIR}"
+fi
+
+if [ ${#TO_HOST} -eq 0 ] && [ ! -d "${TO_DIR}" ]; then
+    aborting "to '${TO_DIR}' directory not found"
+fi
+
+touch "${LOGFILE}" &> /dev/null
+if [ $? -ne 0 ]; then
+    echo
+    echo "WARNING! log '${LOGFILE}' file not writable"
+    echo
+fi
+
+RSYNC_FROM=""
+if [ ${#FROM_USER} -gt 0 ]; then
+    RSYNC_FROM+="${FROM_USER}@"
+fi
+if [ ${#FROM_HOST} -gt 0 ]; then
+    RSYNC_FROM+="${FROM_HOST}:"
+fi
+if [ ${#FROM_DIR} -gt 0 ]; then
+    RSYNC_FROM+="${FROM_DIR}/"
+fi
+RSYNC_FROM=${RSYNC_FROM//\/\//\/}
+
+RSYNC_TO=""
+if [ ${#TO_USER} -gt 0 ]; then
+    RSYNC_TO+="${TO_USER}@"
+fi
+if [ ${#TO_HOST} -gt 0 ]; then
+    RSYNC_TO+="${TO_HOST}:"
+fi
+if [ ${#TO_DIR} -gt 0 ]; then
+    RSYNC_TO+="${TO_DIR}/"
+fi
+RSYNC_TO=${RSYNC_TO//\/\//\/}
+
+if [ "${RSYNC_FROM}" == "${RSYNC_TO}" ]; then
+    aborting "no need to rsync from/to the same destination '${RSYNC_FROM}'"
+fi
+
+echo
+date
+echo
+echo time ${RSYNC} ${RSYNC_ARGS} ${RSYNC_FROM} ${RSYNC_TO}
+
+time ${RSYNC} ${RSYNC_ARGS} ${RSYNC_FROM} ${RSYNC_TO} 2>&1
