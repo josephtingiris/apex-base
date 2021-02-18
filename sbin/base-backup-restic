@@ -3,7 +3,7 @@
 export RESTIC_PASSWORD_FILE=/root/etc/profile.d/restic.sh
 export RESTIC_REPOSITORY=sftp:restic@restic:repo
 
-PATH=/apex/sbin:/apex/bin:/sbin:/bin
+PATH=/base/sbin:/base/bin:/sbin:/bin
 
 Basename_0=$(basename ${0})
 Dirname_0=$(dirname ${0})
@@ -19,6 +19,8 @@ function addBackups() {
     fi
 
     local policy_file="${Dirname_0}/../etc/${Basename_0}.${policy}"
+
+    echo "Policy = ${policy} (${policy_file})"
 
     if [ -r "${policy_file}" ]; then
         while read line; do
