@@ -40,11 +40,11 @@ set -f
 
 # Validation Logic
 
-dependency "/apex/bin/svn"
+dependency "/base/bin/svn"
 
 # typically, upgrade before optionArguments, begin, etc
 
-# upgrade "$0" "/apex/bin /usr/local/bin"
+# upgrade "$0" "/base/bin /usr/local/bin"
 
 # optionArguments Logic
 

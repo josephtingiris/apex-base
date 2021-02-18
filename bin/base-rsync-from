@@ -19,7 +19,7 @@ function debugecho() {
 
 function usage() {
     echo
-    echo "$0 [user@][host:]<from directory> [user@][host:]<to directory> [log file]"
+    echo "$0 [user@][host:]<from directory> [user@][host:]<to directory> [log file] [-f|--force]"
     echo
     exit 2
 }
@@ -88,6 +88,8 @@ LOGFILE=${3:-"/var/log/base-rsync-from.log"}
 
 debugecho "LOGFILE       = ${LOGFILE}"
 
+FORCE=${FORCE:-"0"}
+
 # main
 
 RSYNC=$(type -P rsync)
@@ -97,14 +99,16 @@ fi
 
 debugecho "RSYNC         = ${RSYNC}"
 
-RSYNC_ARGS="--delete-during -aH -h -l --stats"
-RSYNC_ARGS="--delete -ahlxvzKHS --stats"
+#RSYNC_ARGS="--delete-during -aH -h -l --stats"
+RSYNC_ARGS=${RSYNC_ARGS:-"--delete -ahlxvKHS --stats"}
 debugecho "RSYNC_ARGS    = ${RSYNC_ARGS}"
 
-BASENAME=$(basename $0)
-PIDS=$(pidof -o '%PPID' -x ${BASENAME})
-if [ ${#PIDS} -gt 0 ]; then
-    aborting "there's another ${BASENAME} running (${PID_COUNT})"
+if [ "${FORCE}" == "0" ]; then
+    BASENAME=$(basename $0)
+    PIDS=$(pidof -o '%PPID' -x ${BASENAME})
+    if [ ${#PIDS} -gt 0 ]; then
+        aborting "there's another ${BASENAME} running (${PIDS})"
+    fi
 fi
 
 if [ ${#TO_HOST} -eq 0 ] && [ ! -d "${TO_DIR}" ]; then
