@@ -450,82 +450,47 @@ if [ $? -ne 0 ]; then
     aborting "failed to cd ${Openvpn_Dir_Remote}"
 fi
 
-EasyRSA=/usr/share/easy-rsa/3/easyrsa
-
-if [ ! -f "${EasyRSA}" ]; then
-    aborting "${EasyRSA} file not found (install it manually; yum install easy-rsa)"
-fi
-
-if [ ! -x "${EasyRSA}" ]; then
-    aborting "${EasyRSA} file not found executable (chmod manually?)"
-fi
-
-if [ ! -r "${Openvpn_Dir_Remote}/vars" ]; then
-    aborting "${Openvpn_Dir_Remote}/vars file not found readable (install it manually)"
-fi
-source "${Openvpn_Dir_Remote}/vars"
-
-export Openvpn_Dir_CCD="${Openvpn_Dir_Remote}/ccd"
-if [ ! -d "${Openvpn_Dir_CCD}" ]; then
-    aborting "${Openvpn_Dir_CCD} openvpn ccd directory not found (create it manually)"
-fi
-debugValue Openvpn_Dir_CCD 2
-
-export Openvpn_Dir_PKI="${Openvpn_Dir_Remote}/pki"
-if [ ! -d "${Openvpn_Dir_PKI}" ]; then
-    if [ ${Base_Openvpn_Update_Flag} -eq 0 ]; then
-        echo "[$(date)] Initializing PKI for ${Openvpn_Remote_Name} ..."
-        cat vars
-        ${EasyRSA} init-pki
-    else
-        aborting "${Openvpn_Dir_PKI} openvpn pki directory not found (run '$0 ${Base_Arguments} -u')"
-    fi
-fi
-debugValue Openvpn_Dir_PKI 2
-
-if [ "${Openvpn_Client_Name}" != "" ]; then
-    # client variables & directory
-
-    export Openvpn_Dir_Client="${Openvpn_Dir_Remote}/client"
-    if [ ! -d "${Openvpn_Dir_Client}" ]; then
-        aborting "${Openvpn_Dir_Client} openvpn client directory not found (create it manually)"
-    fi
-    debugValue Openvpn_Dir_Client 2
-
-    if [ ! -r "${Openvpn_Dir_Client}/client-template.conf" ]; then
-        aborting "${Openvpn_Dir_Client}/client-template.conf file not found readable (create it manually)"
-    fi
-
-    export Openvpn_Dir_Client_Name="${Openvpn_Dir_Client}/${Openvpn_Client_Name}"
-    debugValue Openvpn_Dir_Client_Name 2
-
-    if [ ! -d "${Openvpn_Dir_Client_Name}" ]; then
-        echo "[$(date)] Creating client directory ${Openvpn_Dir_Client_Name} ..."
-        mkdir "${Openvpn_Dir_Client_Name}"
-        if [ $? -ne 0 ]; then
-            aborting "failed to mkdir ${Openvpn_Dir_Client_Name}"
-        fi
-    fi
-
-    export Openvpn_Remote_Client_Name="${Openvpn_Remote_Name}-${Openvpn_Client_Name}"
-    debugValue Openvpn_Remote_Client_Name 2
-
-    export Openvpn_Config_Client="${Openvpn_Dir_Client_Name}/${Openvpn_Remote_Client_Name}.conf"
-    debugValue Openvpn_Config_Client 2
-fi
-
 if [ "${Openvpn_Server_Name}" != "" ]; then
     # server variables & directory
+
+    EasyRSA=/usr/share/easy-rsa/3/easyrsa
+
+    if [ ! -f "${EasyRSA}" ]; then
+        aborting "${EasyRSA} file not found (install it manually; yum install easy-rsa)"
+    fi
+
+    if [ ! -x "${EasyRSA}" ]; then
+        aborting "${EasyRSA} file not found executable (chmod manually?)"
+    fi
+
+    if [ ! -r "${Openvpn_Dir_Remote}/vars" ]; then
+        aborting "${Openvpn_Dir_Remote}/vars file not found readable (install it manually)"
+    fi
+    source "${Openvpn_Dir_Remote}/vars"
+
+    export Openvpn_Dir_CCD="${Openvpn_Dir_Remote}/ccd"
+    if [ ! -d "${Openvpn_Dir_CCD}" ]; then
+        aborting "${Openvpn_Dir_CCD} openvpn ccd directory not found (create it manually)"
+    fi
+    debugValue Openvpn_Dir_CCD 2
+
+    export Openvpn_Dir_PKI="${Openvpn_Dir_Remote}/pki"
+    if [ ! -d "${Openvpn_Dir_PKI}" ]; then
+        if [ ${Base_Openvpn_Update_Flag} -eq 0 ]; then
+            echo "[$(date)] Initializing PKI for ${Openvpn_Remote_Name} ..."
+            cat vars
+            ${EasyRSA} init-pki
+        else
+            aborting "${Openvpn_Dir_PKI} openvpn pki directory not found (run '$0 ${Base_Arguments} -u')"
+        fi
+    fi
+    debugValue Openvpn_Dir_PKI 2
 
     export Openvpn_Dir_Server="${Openvpn_Dir_Remote}/server"
     if [ ! -d "${Openvpn_Dir_Server}" ]; then
         aborting "${Openvpn_Dir_Server} openvpn server directory not found (create it manually)"
     fi
     debugValue Openvpn_Dir_Server 2
-
-    if [ ! -r "${Openvpn_Dir_Server}/server-template.conf" ]; then
-        aborting "${Openvpn_Dir_Server}/server-template.conf file not found readable (create it manually)"
-    fi
 
     export Openvpn_Dir_Server_Name="${Openvpn_Dir_Server}/${Openvpn_Server_Name}"
     debugValue Openvpn_Dir_Server_Name 2
@@ -543,6 +508,33 @@ if [ "${Openvpn_Server_Name}" != "" ]; then
 
     export Openvpn_Config_Server="${Openvpn_Dir_Server_Name}/${Openvpn_Remote_Server_Name}.conf"
     debugValue Openvpn_Config_Server 2
+fi
+
+if [ "${Openvpn_Client_Name}" != "" ]; then
+    # client variables & directory
+
+    export Openvpn_Dir_Client="${Openvpn_Dir_Remote}/client"
+    if [ ! -d "${Openvpn_Dir_Client}" ]; then
+        aborting "${Openvpn_Dir_Client} openvpn client directory not found (create it manually)"
+    fi
+    debugValue Openvpn_Dir_Client 2
+
+    export Openvpn_Dir_Client_Name="${Openvpn_Dir_Client}/${Openvpn_Client_Name}"
+    debugValue Openvpn_Dir_Client_Name 2
+
+    if [ ! -d "${Openvpn_Dir_Client_Name}" ]; then
+        echo "[$(date)] Creating client directory ${Openvpn_Dir_Client_Name} ..."
+        mkdir "${Openvpn_Dir_Client_Name}"
+        if [ $? -ne 0 ]; then
+            aborting "failed to mkdir ${Openvpn_Dir_Client_Name}"
+        fi
+    fi
+
+    export Openvpn_Remote_Client_Name="${Openvpn_Remote_Name}-${Openvpn_Client_Name}"
+    debugValue Openvpn_Remote_Client_Name 2
+
+    export Openvpn_Config_Client="${Openvpn_Dir_Client_Name}/${Openvpn_Remote_Client_Name}.conf"
+    debugValue Openvpn_Config_Client 2
 fi
 
 #
@@ -604,19 +596,6 @@ if [ ${Base_Openvpn_Update_Flag} -eq 0 ]; then
         if [ ${Base_Openvpn_Update_Flag} -ne 0 ]; then
             baseFinish ${Return_Code}
         fi
-    fi
-fi
-
-if [ ! -r "${Openvpn_Dir_PKI}/serial" ] || [ ! -r "${Openvpn_Dir_PKI}/ca.crt" ]; then
-    aborting "invalid CA (run '$0 ${Base_Arguments} -u')"
-fi
-
-Openvpn_PKI_Issued_Count=$(ls -1 "${Openvpn_Dir_PKI}/issued" 2> /dev/null | wc -l)
-debugValue Openvpn_PKI_Issued_Count 11
-
-if [ ${Openvpn_PKI_Issued_Count} -lt 1 ]; then
-    if [ "${Openvpn_Client_Name}" != "" ]; then
-        aborting "${Openvpn_PKI_Issued_Count} certificates issued; create a server certificate"
     fi
 fi
 
@@ -685,6 +664,19 @@ fi
 #
 
 if [ ${Base_Openvpn_Generate_Flag} -eq 0 ]; then
+    if [ ! -r "${Openvpn_Dir_PKI}/serial" ] || [ ! -r "${Openvpn_Dir_PKI}/ca.crt" ]; then
+        aborting "invalid CA (run '$0 ${Base_Arguments} -u')"
+    fi
+
+    Openvpn_PKI_Issued_Count=$(ls -1 "${Openvpn_Dir_PKI}/issued" 2> /dev/null | wc -l)
+    debugValue Openvpn_PKI_Issued_Count 11
+
+    if [ ${Openvpn_PKI_Issued_Count} -lt 1 ]; then
+        if [ "${Openvpn_Client_Name}" != "" ]; then
+            aborting "${Openvpn_PKI_Issued_Count} certificates issued; create a server certificate"
+        fi
+    fi
+
     if [ "${Openvpn_Client_Name}" != "" ]; then
         # create client
 
@@ -698,7 +690,11 @@ if [ ${Base_Openvpn_Generate_Flag} -eq 0 ]; then
             echo
         fi
 
-        echo "[$(date)] Creating configuration ${Openvpn_Config_Client} ..."
+        if [ ! -r "${Openvpn_Dir_Client}/client-template.conf" ]; then
+            aborting "${Openvpn_Dir_Client}/client-template.conf file not found readable (create it manually)"
+        fi
+
+        echo "[$(date)] Generating client configuration ${Openvpn_Config_Client} ..."
         echo
         envsubst < "${Openvpn_Dir_Client}/client-template.conf" > "${Openvpn_Config_Client}"
         cat "${Openvpn_Config_Client}"
@@ -729,30 +725,34 @@ if [ ${Base_Openvpn_Generate_Flag} -eq 0 ]; then
             baseFinish ${Return_Code}
         fi
     fi
-fi
 
-if [ "${Openvpn_Server_Name}" != "" ]; then
-    # create server
+    if [ "${Openvpn_Server_Name}" != "" ]; then
+        # create server
 
-    if [ ! -f "${Openvpn_Dir_PKI}/issued/${Openvpn_Server_Name}.crt" ]; then
-        echo "[$(date)] Issuing certificate ${Openvpn_Dir_PKI}/issued/${Openvpn_Server_Name}.crt"
-        echo
-        ${EasyRSA} build-server-full ${Openvpn_Server_Name} nopass
-        if [ $? -ne 0 ]; then
-            aborting "failed to ${EasyRSA} build-server-full ${Openvpn_Server_Name}"
+        if [ ! -f "${Openvpn_Dir_PKI}/issued/${Openvpn_Server_Name}.crt" ]; then
+            echo "[$(date)] Issuing certificate ${Openvpn_Dir_PKI}/issued/${Openvpn_Server_Name}.crt"
+            echo
+            ${EasyRSA} build-server-full ${Openvpn_Server_Name} nopass
+            if [ $? -ne 0 ]; then
+                aborting "failed to ${EasyRSA} build-server-full ${Openvpn_Server_Name}"
+            fi
+            echo
         fi
+
+        if [ ! -r "${Openvpn_Dir_Server}/server-template.conf" ]; then
+            aborting "${Openvpn_Dir_Server}/server-template.conf file not found readable (create it manually)"
+        fi
+
+        echo "[$(date)] Generating server configuration ${Openvpn_Config_Server}"
         echo
-    fi
+        envsubst < "${Openvpn_Dir_Server}/server-template.conf" > "${Openvpn_Config_Server}"
+        cat "${Openvpn_Config_Server}"
+        echo
 
-    echo "[$(date)] Creating configuration ${Openvpn_Config_Server}"
-    echo
-    envsubst < "${Openvpn_Dir_Server}/server-template.conf" > "${Openvpn_Config_Server}"
-    cat "${Openvpn_Config_Server}"
-    echo
-
-    baseOpenvpnFinish
-    if [ ${Restart_Flag} -ne 0 ] && [ ${Start_Flag} -ne 0 ] && [ ${Status_Flag} -ne 0 ] && [ ${Stop_Flag} -ne 0 ]; then
-        baseFinish ${Return_Code}
+        baseOpenvpnFinish
+        if [ ${Restart_Flag} -ne 0 ] && [ ${Start_Flag} -ne 0 ] && [ ${Status_Flag} -ne 0 ] && [ ${Stop_Flag} -ne 0 ]; then
+            baseFinish ${Return_Code}
+        fi
     fi
 fi
 
