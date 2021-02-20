@@ -1,0 +1,653 @@
+#!/bin/bash
+
+# This script will ... simplify setting up openvpn clients & servers
+
+# Copyright (C) 2013-2020 Joseph Tingiris (joseph.tingiris@gmail.com)
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+# begin Base.bash.include
+
+if [ ${#Debug} -gt 0 ]; then
+    Debug=${Debug}
+else
+    if [ ${#DEBUG} -gt 0 ]; then
+        Debug=${DEBUG}
+    else
+        Debug=0
+    fi
+fi
+
+if [ ${#Base_Bash_Source} -eq 0 ]; then
+    Base_Bashes=()
+    Base_Bashes+=(Base21.bash)
+
+    Base_Bash_Dirs=()
+    Base_Bash_Dirs+=(/base)
+    Base_Bash_Dirs+=(/usr)
+    Base_Bash_Dirs+=(${BASH_SOURCE%/*})
+    Base_Bash_Dirs+=(~)
+
+    for Base_Bash_Dir in ${Base_Bash_Dirs[@]}; do
+        while [ ${#Base_Bash_Dir} -gt 0 ] && [ "$Base_Bash_Dir" != "/" ]; do # search backwards
+            Base_Bash_Source_Dirs=()
+            Base_Bash_Source_Dirs+=("${Base_Bash_Dir}/include/base-bash")
+            Base_Bash_Source_Dirs+=("${Base_Bash_Dir}/include")
+            Base_Bash_Source_Dirs+=("${Base_Bash_Dir}")
+            for Base_Bash in ${Base_Bashes[@]}; do
+                for Base_Bash_Source_Dir in ${Base_Bash_Source_Dirs[@]}; do
+                    Base_Bash_Source=${Base_Bash_Source_Dir}/${Base_Bash}
+
+                    if [ -r "${Base_Bash_Source}" ]; then
+                        source "${Base_Bash_Source}"
+                        break
+                    else
+                        unset -v Base_Bash_Source
+                    fi
+                done
+                [ ${Base_Bash_Source} ] && break
+            done
+            [ ${Base_Bash_Source} ] && break
+            Base_Bash_Dir=${Base_Bash_Dir%/*} # search backwards
+        done
+        [ ${Base_Bash_Source} ] && break
+    done
+fi
+
+if [ ${#Base_Bash_Source} -eq 0 ] || [ ! -r "${Base_Bash_Source}" ]; then
+    echo "${Base_Bash} file not readable"
+    exit 1
+fi
+
+# end Base.bash.include
+
+# Global_Variables
+
+# explicit declarations
+
+declare -x Version="0.1";
+
+declare -i Return_Code=0
+
+# functionNames
+
+function baseOpenvpnFinish() {
+    echo "[$(date)] Setting ownership in ${Openvpn_Dir_Remote} ..."
+    chown -R openvpn:openvpn "${Openvpn_Dir_Remote}"
+    if [ $? -ne 0 ]; then
+        aborting failed to "chown -R openvpn:openvpn ${Openvpn_Dir_Remote}"
+    fi
+}
+
+# Validation Logic
+
+dependency "date"
+
+# typically, upgrade before optionArguments, begin, etc
+
+# upgrade "$0" "/base/bin /usr/local/bin"
+
+# optionArguments Logic
+
+# add usage help to the Base_Usage array (before usage() is called for the first time [via optionArguments])
+
+Base_Usage+=("-r | --remote <name> = openvpn remote name (or IP)")
+Base_Usage+=("-u | --update <name> = update remote crl")
+Base_Usage+=("")
+Base_Usage+=("-c | --client <name> = openvpn client name")
+Base_Usage+=("-s | --server <name> = openvpn server name")
+Base_Usage+=("")
+Base_Usage+=("-i | --interface <name> = openvpn interface name [default=first 15 characters of remote name]")
+Base_Usage+=("-d | --dir <name> = openvpn directory name [default=/etc/openvpn]")
+
+#Base_Usage+=("-m | --mutiple <value(s)> = supports an argument with one or more <value(s)>")
+#Base_Usage+=("-n | --multiple-optional [value(s)] = supports an argument with or without one or more [value(s)]")
+#Base_Usage+=("-o | --one = supports only one argument without a value")
+#Base_Usage+=("-s | --single <value> = supports only one argument with a single <value>")
+#Base_Usage+=("-t | --single-optional [value(s)] = supports only one argument with or without a [value]")
+#Base_Usage+=("") # blank link; seperator
+
+# call the optionArguments function (to process common options, i.e. --debug, --help, --usage, --yes, etc)
+
+optionArguments $@
+
+# expand upon the optionArguments function (careful, same named switches will be processed twice)
+
+# for each cli option (argument), evaluate them case by case, process them, and shift to the next
+
+declare -i Base_Openvpn_Client_Name_Flag=1 # 0=true/on/yes, 1=false/off/no
+declare -i Base_Openvpn_Dir_Flag=1 # 0=true/on/yes, 1=false/off/no
+declare -i Base_Openvpn_Interface_Name_Flag=1 # 0=true/on/yes, 1=false/off/no
+declare -i Base_Openvpn_Remote_Name_Flag=1 # 0=true/on/yes, 1=false/off/no
+declare -i Base_Openvpn_Server_Name_Flag=1 # 0=true/on/yes, 1=false/off/no
+declare -i Base_Openvpn_Update_Flag=1 # 0=true/on/yes, 1=false/off/no
+
+declare -i Multiple_Flag=1 # default off
+declare -i Multiple_Optional_Flag=1 # default off
+declare -i One_Flag=1 # default off
+declare -i Single_Flag=1 # default off
+declare -i Single_Optional_Flag=1 # default off
+
+declare -i Restart_Flag=1 # default off
+declare -i Start_Flag=1 # default off
+declare -i Status_Flag=1 # default off
+declare -i Stop_Flag=1 # default off
+
+declare -i Option_Arguments_Index=0
+declare -i Option_Arguments_Shift=0
+for Option_Argument in ${Option_Arguments[@]}; do
+
+    if [ ${Option_Arguments_Shift} -eq 1 ]; then
+        ((Option_Arguments_Index++))
+        Option_Arguments_Shift=0
+        continue
+    fi
+
+    Option_Argument_Next="${Option_Arguments[${Option_Arguments_Index}+1]}"
+
+    case "${Option_Argument}" in
+        -c | --c | -client | --client)
+            # supports only one argument with a single value
+            if [ ${Base_Openvpn_Client_Name_Flag} -eq 0 ]; then
+                usage "${Option_Argument} may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ] || [ "${Option_Argument_Next}" == "restart" ] || [ "${Option_Argument_Next}" == "start" ] || [ "${Option_Argument_Next}" == "status" ] || [ "${Option_Argument_Next}" == "stop" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Base_Openvpn_Client_Name+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Base_Openvpn_Client_Name="$(listUnique "${Base_Openvpn_Client_Name}")"
+            if [ "${Base_Openvpn_Client_Name}" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Base_Openvpn_Client_Name_Flag=0
+            debugValue Base_Openvpn_Client_Name_Flag 2 "${Option_Argument} flag was set [${Base_Openvpn_Client_Name}]"
+            ;;
+
+        -d | --d | -dir | --dir | -directory | --directory)
+            # supports only one argument with a single value
+            if [ ${Base_Openvpn_Dir_Flag} -eq 0 ]; then
+                usage "${Option_Argument} may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ] || [ "${Option_Argument_Next}" == "restart" ] || [ "${Option_Argument_Next}" == "start" ] || [ "${Option_Argument_Next}" == "status" ] || [ "${Option_Argument_Next}" == "stop" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Base_Openvpn_Dir+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Base_Openvpn_Dir="$(listUnique "${Base_Openvpn_Dir}")"
+            if [ "${Base_Openvpn_Dir}" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Base_Openvpn_Dir_Flag=0
+            debugValue Base_Openvpn_Dir_Flag 2 "${Option_Argument} flag was set [${Base_Openvpn_Dir}]"
+            ;;
+
+        -i | --i | -interface | --interface)
+            # supports only one argument with a single value
+            if [ ${Base_Openvpn_Interface_Name_Flag} -eq 0 ]; then
+                usage "${Option_Argument} may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ] || [ "${Option_Argument_Next}" == "restart" ] || [ "${Option_Argument_Next}" == "start" ] || [ "${Option_Argument_Next}" == "status" ] || [ "${Option_Argument_Next}" == "stop" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Base_Openvpn_Interface_Name+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Base_Openvpn_Interface_Name="$(listUnique "${Base_Openvpn_Interface_Name}")"
+            if [ "${Base_Openvpn_Interface_Name}" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Base_Openvpn_Interface_Name_Flag=0
+            debugValue Base_Openvpn_Interface_Name_Flag 2 "${Option_Argument} flag was set [${Base_Openvpn_Interface_Name}]"
+            ;;
+
+        -r | --r | -remote | --remote)
+            # supports only one argument with a single value
+            if [ ${Base_Openvpn_Remote_Name_Flag} -eq 0 ]; then
+                usage "${Option_Argument} may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ] || [ "${Option_Argument_Next}" == "restart" ] || [ "${Option_Argument_Next}" == "start" ] || [ "${Option_Argument_Next}" == "status" ] || [ "${Option_Argument_Next}" == "stop" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Base_Openvpn_Remote_Name+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Base_Openvpn_Remote_Name="$(listUnique "${Base_Openvpn_Remote_Name}")"
+            if [ "${Base_Openvpn_Remote_Name}" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Base_Openvpn_Remote_Name_Flag=0
+            debugValue Base_Openvpn_Remote_Name_Flag 2 "${Option_Argument} flag was set [${Base_Openvpn_Remote_Name_Flag}]"
+            ;;
+
+        -s | --s | -server | --server)
+            # supports only one argument with a single value
+            if [ ${Base_Openvpn_Server_Name_Flag} -eq 0 ]; then
+                usage "${Option_Argument} may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" == "-" ] || [ "${Option_Argument_Next}" == "restart" ] || [ "${Option_Argument_Next}" == "start" ] || [ "${Option_Argument_Next}" == "status" ] || [ "${Option_Argument_Next}" == "stop" ]; then
+                    usage "${Option_Argument} requires a given value"
+                else
+                    declare Base_Openvpn_Server_Name+=" ${Option_Argument_Next}"
+                    Option_Arguments_Shift=1
+                fi
+            fi
+            Base_Openvpn_Server_Name="$(listUnique "${Base_Openvpn_Server_Name}")"
+            if [ "${Base_Openvpn_Server_Name}" == "" ]; then
+                usage "${Option_Argument} requires a valid value"
+            fi
+            Base_Openvpn_Server_Name_Flag=0
+            debugValue Base_Openvpn_Server_Name_Flag 2 "${Option_Argument} flag was set [${Base_Openvpn_Server_Name}]"
+            ;;
+
+        -u | -update | --update)
+            # supports only one argument without a value
+            if [ ${Base_Openvpn_Update_Flag} -eq 0 ]; then
+                usage "${Option_Argument} may only be given once"
+            fi
+            if [ "${Option_Argument_Next}" != "" ]; then
+                if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+                    usage "${Option_Argument} argument does not accept values"
+                fi
+            fi
+            Base_Openvpn_Update_Flag=0
+            debugValue Base_Openvpn_Update_Flag 2 "${Option_Argument} flag was set"
+            ;;
+
+        # todo: remove
+
+        -m | --m | -multiple | --multiple)
+        # supports an argument with one or more value(s)
+        if [ "${Option_Argument_Next}" != "" ]; then
+            if [ "${Option_Argument_Next:0:1}" == "-" ] || [ "${Option_Argument_Next}" == "restart" ] || [ "${Option_Argument_Next}" == "start" ] || [ "${Option_Argument_Next}" == "status" ] || [ "${Option_Argument_Next}" == "stop" ]; then
+                usage "${Option_Argument} requires a given value"
+            else
+                declare Multiple+=" ${Option_Argument_Next}"
+                Option_Arguments_Shift=1
+            fi
+        fi
+        Multiple="$(listUnique "${Multiple}")"
+        if [ "${Multiple}" == "" ]; then
+            usage "${Option_Argument} requires a valid value"
+        fi
+        Multiple_Flag=0
+        debugValue Multiple_Flag 2 "${Option_Argument} flag was set [${Multiple}]"
+        ;;
+
+    -n | --n | -multiple-optional | --multiple-optional)
+        # supports an argument with or without one or more value(s)
+        if [ "${Option_Argument_Next}" != "" ]; then
+            if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+                declare Multiple_Optional+=" ${Option_Argument_Next}"
+                Option_Arguments_Shift=1
+            fi
+        fi
+        Multiple_Optional="$(listUnique "${Multiple_Optional}")"
+        Multiple_Optional_Flag=0
+        debugValue Multiple_Optional_Flag 2 "${Option_Argument} flag was set [${Multiple_Optional}]"
+        ;;
+
+    -o | -one | --one)
+        # supports only one argument without a value
+        if [ ${One_Flag} -eq 0 ]; then
+            usage "${Option_Argument} may only be given once"
+        fi
+        if [ "${Option_Argument_Next}" != "" ]; then
+            if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+                usage "${Option_Argument} argument does not accept values"
+            fi
+        fi
+        One_Flag=0
+        debugValue One_Flag 2 "${Option_Argument} flag was set"
+        ;;
+
+    -t | --t | -single-optional | --single-optional)
+        # supports only one argument with or without a value
+        if [ ${Single_Optional_Flag} -eq 0 ]; then
+            usage "${Option_Argument} may only be given once"
+        fi
+        if [ "${Option_Argument_Next}" != "" ]; then
+            if [ "${Option_Argument_Next:0:1}" != "-" ] && [ "${Option_Argument_Next}" != "restart" ] && [ "${Option_Argument_Next}" != "start" ] && [ "${Option_Argument_Next}" != "status" ] && [ "${Option_Argument_Next}" != "stop" ]; then
+                declare Single_Optional+=" ${Option_Argument_Next}"
+                Option_Arguments_Shift=1
+            fi
+        fi
+        Single_Optional="$(listUnique "${Single_Optional}")"
+        Single_Optional_Flag=0
+        debugValue Single_Optional_Flag 2 "${Option_Argument} flag was set [${Single_Optional}]"
+        ;;
+
+    restart)
+        # supports 'restart' argument
+        Restart_Flag=0
+        ((Option_Arguments_Index++))
+        debugValue Restart_Flag 2 "${Option_Argument} flag was set"
+        ;;
+
+    start)
+        # supports 'start' argument
+        Start_Flag=0
+        debugValue Start_Flag 2 "${Option_Argument} flag was set"
+        ;;
+
+    status)
+        # supports 'status' argument
+        Status_Flag=0
+        debugValue Status_Flag 2 "${Option_Argument} flag was set"
+        ;;
+
+    stop)
+        # supports 'stop' argument
+        Stop_Flag=0
+        debugValue Stop_Flag 2 "${Option_Argument} flag was set"
+        ;;
+
+    *)
+        # unsupported arguments
+        if [ "${Option_Argument}" != "" ]; then
+            echo "unsupported argument '${Option_Argument}'"
+            baseFinish 2
+        fi
+        ;;
+
+    esac
+
+    ((Option_Arguments_Index++))
+done
+unset -v Option_Argument_Next Option_Arguments_Index Option_Arguments_Shift
+
+# e.g., if there are no arguments, echo a usage message and/or exit
+
+if [ ${Base_Arguments_Count} -eq 0 ]; then usage; fi
+if [ ${Base_Arguments_Count} -eq 1 ] && [ ${Debug_Flag} -ne 1 ]; then usage; fi
+if [ ${Base_Arguments_Count} -eq 2 ] && [ ${Debug_Flag} -ne 1 ] && [ "${Debug}" != "" ]; then usage; fi
+
+# Main Logic
+
+baseStart
+
+if [ "${Base_Openvpn_Remote_Name}" == "" ]; then
+    usage "must specify a remote name"
+fi
+
+export Openvpn_Remote_Name="${Base_Openvpn_Remote_Name}"
+debugValue Openvpn_Remote_Name 2
+
+# note: linux interface names must be <= 15 characters
+if [ "${Base_Openvpn_Interface_Name}" == "" ]; then
+    Openvpn_Interface_Name="${Openvpn_Remote_Name:0:15}"
+else
+    Openvpn_Interface_Name="${Base_Openvpn_Interface_Name}"
+fi
+export Openvpn_Interface_Name
+debugValue Openvpn_Interface_Name 2
+
+if [ ${Base_Openvpn_Dir_Flag} -eq 0 ]; then
+    Openvpn_Dir=${Base_Openvpn_Dir}
+else
+    Openvpn_Dir="/etc/openvpn"
+fi
+export Openvpn_Dir
+
+if [ ! -d "${Openvpn_Dir}" ]; then
+    aborting "${Openvpn_Dir} openvpn directory not found"
+fi
+
+if [ ${Base_Openvpn_Update_Flag} -eq 1 ]; then
+    if [ "${Base_Openvpn_Client_Name}" == "" -a "${Base_Openvpn_Server_Name}" == "" ]; then
+        usage "must specify either a client or server name"
+    fi
+
+    if [ "${Base_Openvpn_Client_Name}" != "" -a "${Base_Openvpn_Server_Name}" != "" ]; then
+        usage "must specify either a client or server name, not both"
+    fi
+fi
+
+if [ "${Base_Openvpn_Client_Name}" != "" ]; then
+    export Openvpn_Client_Name="${Base_Openvpn_Client_Name}"
+    debugValue Openvpn_Client_Name 2
+else
+    if [ "${Base_Openvpn_Server_Name}" != "" ]; then
+        export Openvpn_Server_Name="${Base_Openvpn_Server_Name}"
+        debugValue Openvpn_Server_Name 2
+    fi
+fi
+
+debugValue Openvpn_Dir 2
+
+export Openvpn_Dir_Remote="${Openvpn_Dir}/${Openvpn_Remote_Name}"
+if [ ! -d "${Openvpn_Dir_Remote}" ]; then
+    aborting "${Openvpn_Dir_Remote} openvpn remote directory not found"
+fi
+debugValue Openvpn_Dir_Remote 2
+
+# everything happens from here
+cd "${Openvpn_Dir_Remote}"
+if [ $? -ne 0 ]; then
+    aborting "failed to cd ${Openvpn_Dir_Remote}"
+fi
+
+if [ ! -x "${Openvpn_Dir_Remote}/easyrsa" ]; then
+    aborting "${Openvpn_Dir_Remote}/easyrsa file not found executable"
+fi
+
+if [ ! -r "${Openvpn_Dir_Remote}/vars" ]; then
+    aborting "${Openvpn_Dir_Remote}/vars file not found readable"
+fi
+
+if [ ! -r "${Openvpn_Dir_Remote}/openssl-1.0.cnf" ]; then
+    aborting "${Openvpn_Dir_Remote}/openssl-1.0.cnf file not found readable"
+fi
+
+export Openvpn_Dir_CCD="${Openvpn_Dir_Remote}/ccd"
+if [ ! -d "${Openvpn_Dir_CCD}" ]; then
+    aborting "${Openvpn_Dir_CCD} openvpn ccd directory not found"
+fi
+debugValue Openvpn_Dir_CCD 2
+
+export Openvpn_Dir_PKI="${Openvpn_Dir_Remote}/pki"
+if [ ! -d "${Openvpn_Dir_PKI}" ]; then
+    if [ ${Base_Openvpn_Update_Flag} -eq 0 ]; then
+        echo "[$(date)] Initializing PKI for ${Openvpn_Remote_Name} ..."
+        cat vars
+        ./easyrsa init-pki
+    else
+        aborting "${Openvpn_Dir_PKI} openvpn pki directory not found (run '$0 ${Base_Arguments} -u')"
+    fi
+fi
+debugValue Openvpn_Dir_PKI 2
+
+if [ ${Base_Openvpn_Update_Flag} -eq 0 ]; then
+    if [ ! -r "${Openvpn_Dir_PKI}/serial" ] || [ ! -r "${Openvpn_Dir_PKI}/ca.crt" ]; then
+        echo "[$(date)] Updating vars for ${Openvpn_Remote_Name} ..."
+        sed -i "/KEY_CN/d" vars
+        echo "export KEY_CN=\"${Openvpn_Remote_Name}\"" >> vars
+        sort vars -o vars
+        vi vars
+
+        Broken_CA=0 # false
+        Update_PKI_Files=(ca.crt private/ca.key index.txt index.txt.old index.txt.attr index.txt.attr.old serial serial.old)
+        for Update_PKI_File in ${Update_PKI_Files[@]}; do
+            if [ -f "${Openvpn_Dir_PKI}/${Update_PKI_File}" ]; then
+                Broken_CA=1
+                break
+            fi
+        done
+
+        if [ ${Broken_CA} -eq 1 ]; then
+            Broken_Epoch=$(date +%s)
+            mv "${Openvpn_Dir_PKI}" "${Openvpn_Dir_PKI}.broken.${Broken_Epoch}"
+            ./easyrsa init-pki
+        fi
+
+        echo "[$(date)] Updating CA for ${Openvpn_Remote_Name} ..."
+        echo
+        ./easyrsa build-ca nopass
+    fi
+
+    if [ ! -f "${Openvpn_Dir_PKI}/dh.pem" ]; then
+        echo "[$(date)] Updating DH parameters for ${Openvpn_Remote_Name} ..."
+        ./easyrsa gen-dh
+    fi
+
+    if [ ! -f "${Openvpn_Dir_PKI}/ta.key" ]; then
+        echo "[$(date)] Updating HMAC key for ${Openvpn_Remote_Name} ..."
+        openvpn --genkey --secret "${Openvpn_Dir_PKI}/ta.key"
+    fi
+
+    echo "[$(date)] Updating CRL for ${Openvpn_Remote_Name} ..."
+    ./easyrsa gen-crl
+    echo svn commit -m 'updated crl'
+    echo systemctl stop openvpn-server@${Openvpn_Remote_Name}
+    echo systemctl start openvpn-server@${Openvpn_Remote_Name}
+
+    baseOpenvpnFinish
+    baseFinish ${Return_Code}
+fi
+
+if [ ! -r "${Openvpn_Dir_PKI}/serial" ] || [ ! -r "${Openvpn_Dir_PKI}/ca.crt" ]; then
+    aborting "invalid CA (run '$0 ${Base_Arguments} -u')"
+fi
+
+Openvpn_PKI_Issued_Count=$(ls -1 "${Openvpn_Dir_PKI}/issued" 2> /dev/null | wc -l)
+debugValue Openvpn_PKI_Issued_Count 11
+
+if [ ${Openvpn_PKI_Issued_Count} -lt 1 ]; then
+    if [ "${Openvpn_Client_Name}" != "" ]; then
+        aborting "${Openvpn_PKI_Issued_Count} certificates issued; create a server certificate"
+    fi
+fi
+
+if [ "${Openvpn_Client_Name}" != "" ]; then
+    # client
+
+    export Openvpn_Dir_Client="${Openvpn_Dir_Remote}/client"
+    if [ ! -d "${Openvpn_Dir_Client}" ]; then
+        aborting "${Openvpn_Dir_Client} openvpn client directory not found"
+    fi
+    debugValue Openvpn_Dir_Client 2
+
+    if [ ! -r "${Openvpn_Dir_Client}/client-template.conf" ]; then
+        aborting "${Openvpn_Dir_Client}/client-template.conf file not found readable"
+    fi
+
+    export Openvpn_Dir_Client_Name="${Openvpn_Dir_Client}/${Openvpn_Client_Name}"
+    debugValue Openvpn_Dir_Client_Name 2
+
+    if [ ! -d "${Openvpn_Dir_Client_Name}" ]; then
+        echo "[$(date)] Creating client directory ${Openvpn_Dir_Client_Name} ..."
+        mkdir "${Openvpn_Dir_Client_Name}"
+        if [ $? -ne 0 ]; then
+            aborting "failed to mkdir ${Openvpn_Dir_Client_Name}"
+        fi
+    fi
+
+    if [ ! -f "${Openvpn_Dir_PKI}/issued/${Openvpn_Client_Name}.crt" ]; then
+        echo "[$(date)] Issuing certificate ${Openvpn_Dir_PKI}/issued/${Openvpn_Client_Name}.crt"
+        echo
+        ./easyrsa build-client-full ${Openvpn_Client_Name} nopass
+        if [ $? -ne 0 ]; then
+            aborting "failed to ./easyrsa build-client-full ${Openvpn_Client_Name}"
+        fi
+        echo
+    fi
+
+    echo "[$(date)] Creating configuration ${Openvpn_Dir_Client_Name}/${Openvpn_Client_Name}.conf ..."
+    echo
+    envsubst < "${Openvpn_Dir_Client}/client-template.conf" > "${Openvpn_Dir_Client_Name}/${Openvpn_Remote_Name}-${Openvpn_Client_Name}.conf"
+    cat "${Openvpn_Dir_Client_Name}/${Openvpn_Remote_Name}-${Openvpn_Client_Name}.conf"
+    echo
+
+    # client specific
+
+    Client_PKI_Files=(ca.crt ta.key issued/${Openvpn_Client_Name}.crt private/${Openvpn_Client_Name}.key)
+    for Client_PKI_File in ${Client_PKI_Files[@]}; do
+        if [ ! -r "${Openvpn_Dir_PKI}/${Client_PKI_File}" ]; then
+            aborting "${Openvpn_Dir_PKI}/${Client_PKI_File} file not found readable"
+        fi
+        echo "[$(date)] Copying ${Client_PKI_File} to ${Openvpn_Dir_Client_Name} ..."
+        cp -f "${Openvpn_Dir_PKI}/${Client_PKI_File}" "${Openvpn_Dir_Client_Name}"
+        if [ $? -ne 0 ]; then
+            aborting "failed to cp -f ${Openvpn_Dir_PKI}/${Client_PKI_File}" "${Openvpn_Dir_Client_Name}"
+        fi
+    done
+
+    echo "[$(date)] Setting modes in ${Openvpn_Dir_Client_Name} ..."
+    chmod 0400 "${Openvpn_Dir_Client_Name}/"*
+    if [ $? -ne 0 ]; then
+        aborting "failed to chmod 0400 ${Openvpn_Dir_Client_Name}/"*
+    fi
+
+    baseOpenvpnFinish
+    baseFinish ${Return_Code}
+fi
+
+if [ "${Openvpn_Server_Name}" != "" ]; then
+    # server
+
+    export Openvpn_Dir_Server="${Openvpn_Dir_Remote}/server"
+    if [ ! -d "${Openvpn_Dir_Server}" ]; then
+        aborting "${Openvpn_Dir_Server} openvpn server directory not found"
+    fi
+    debugValue Openvpn_Dir_Server 2
+
+    if [ ! -r "${Openvpn_Dir_Server}/server-template.conf" ]; then
+        aborting "${Openvpn_Dir_Server}/server-template.conf file not found readable"
+    fi
+
+    export Openvpn_Dir_Server_Name="${Openvpn_Dir_Server}/${Openvpn_Server_Name}"
+    debugValue Openvpn_Dir_Server_Name 2
+
+    if [ ! -d "${Openvpn_Dir_Server_Name}" ]; then
+        echo "[$(date)] Creating server directory ${Openvpn_Dir_Server_Name} ..."
+        mkdir "${Openvpn_Dir_Server_Name}"
+        if [ $? -ne 0 ]; then
+            aborting "failed to mkdir ${Openvpn_Dir_Server_Name}"
+        fi
+    fi
+
+    if [ ! -f "${Openvpn_Dir_PKI}/issued/${Openvpn_Server_Name}.crt" ]; then
+        echo "[$(date)] Issuing certificate ${Openvpn_Dir_PKI}/issued/${Openvpn_Server_Name}.crt"
+        echo
+        ./easyrsa build-server-full ${Openvpn_Server_Name} nopass
+        if [ $? -ne 0 ]; then
+            aborting "failed to ./easyrsa build-server-full ${Openvpn_Server_Name}"
+        fi
+        echo
+    fi
+
+    echo "[$(date)] Creating configuration ${Openvpn_Dir_Server_Name}/${Openvpn_Server_Name}.conf ..."
+    echo
+    envsubst < "${Openvpn_Dir_Server}/server-template.conf" > "${Openvpn_Dir_Server_Name}/${Openvpn_Remote_Name}-${Openvpn_Server_Name}.conf"
+    cat "${Openvpn_Dir_Server_Name}/${Openvpn_Remote_Name}-${Openvpn_Server_Name}.conf"
+    echo
+
+    baseOpenvpnFinish
+    baseFinish ${Return_Code}
+fi
+
+baseOpenvpnFinish
+baseFinish ${Return_Code}
+
