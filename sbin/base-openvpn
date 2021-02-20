@@ -450,7 +450,7 @@ if [ $? -ne 0 ]; then
     aborting "failed to cd ${Openvpn_Dir_Remote}"
 fi
 
-if [ "${Openvpn_Server_Name}" != "" ]; then
+if [ "${Openvpn_Server_Name}" != "" ] || [ ${Base_Openvpn_Generate_Flag} -eq 0 ]; then
     # server variables & directory
 
     EasyRSA=/usr/share/easy-rsa/3/easyrsa
