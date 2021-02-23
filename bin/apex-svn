@@ -466,55 +466,26 @@ fi
 debugValue SVN_WHO_HOME 10
 
 SVN_SSH_CONFIG="${SVN_WHO_HOME}/.subversion/SVN_SSH.config"
+if [ ! -r "${SVN_SSH_CONFIG}" ]; then
+    SVN_SSH_CONFIG="${SVN_WHO_HOME}/.ssh/config"
+fi
 
-if [ ${#SSH_AUTH_SOCK} -eq 0 ]; then
+SSH_WARNING=0
 
-        # interfere (a little) with normal (non-su(do)) users that aren't using ssh agent
+if [ "${Apex_User1}" == "" ] && [ "${Base_User}" == "" ]; then
 
-        SSH_WARNING=0
-        SSH_WARNING_CONFIG="${SVN_SSH_CONFIG}"
+    SVN_HOST=$(${SVN_BIN} info 2> /dev/null | grep ^URL: | grep svn+ssh | awk -F\/ '{print $3}' | awk -F\@ '{print $2}')
 
-        if [ -r "${SVN_SSH_CONFIG}" ]; then
-            SVN_SSH_HOST_CONFIG=$(grep ^IdentityFile "${SVN_SSH_CONFIG}")
+    if [ "${SVN_HOST}" != "" ]; then
 
-            if [ "${SVN_SSH_HOST_CONFIG}" == "" ]; then
-                SSH_WARNING=1
-            fi
+        warning "You're using svn from a different user than you logged in with!"
 
-            export SVN_SSH="ssh ${SVN_SSH_DEBUG} -o 'SendEnv Apex_User' -o 'SendEnv Base_User' -F ${SVN_SSH_CONFIG}"
-        else
-            SVN_SSH_CONFIG="${SVN_WHO_HOME}/.ssh/config"
+        echo "To get rid of this warning;"
+        echo
+        echo "1) export Base_User=$(logname)@$HOSTNAME"
+        echo
 
-            if [ -r "${SVN_SSH_CONFIG}" ]; then
-                SVN_HOST_CONFIG=$(grep ^IdentityFile "${SVN_SSH_CONFIG}")
-
-                if [ "${SVN_HOST_CONFIG}" == "" ]; then
-                    SSH_WARNING=1
-                fi
-            else
-                SSH_WARNING=1
-            fi
-        fi
-
-        if [ ${SSH_WARNING} -eq 1 ]; then
-
-            SVN_HOST=$(${SVN_BIN} info 2> /dev/null | grep ^URL: | grep svn+ssh | awk -F\/ '{print $3}' | awk -F\@ '{print $2}')
-
-            if [ "${SVN_HOST}" != "" ] && [ "${SSH_WARNING_CONFIG}" != "" ]; then
-
-                warning "svn+ssh won't work correctly; you're trying to use svn from a different user than you logged in with"
-
-                echo "To get rid of this warning;"
-                echo
-                echo "1) ensure ~/.ssh/config or ${SSH_WARNING_CONFIG} has content similar to the following:"
-                echo
-                echo "Host ${SVN_HOST}"
-                echo "User ${SVN_WHO}"
-                echo "IdentityFile $(dirname $(dirname "${SSH_WARNING_CONFIG}"))/.ssh/id_ed25519"
-                echo
-
-            fi
-        fi
+    fi
 fi
 
 debugValue SVN_ARGS 10
@@ -523,7 +494,7 @@ debugValue SVN_SSH 10
 debugValue SVN_SSH_CONFIG 10
 
 if [ ${#SVN_SSH} -gt 0 ]; then
-    if [ -f "${SVN_SSH_CONFIG}" ]; then
+    if [ -r "${SVN_SSH_CONFIG}" ]; then
         ${SVN_BIN} --config-option "config:tunnels:ssh=${SVN_SSH} -F '${SVN_SSH_CONFIG}'" "$@"
     else
         ${SVN_BIN} --config-option "config:tunnels:ssh=${SVN_SSH}" "$@"
