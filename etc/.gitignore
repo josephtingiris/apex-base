@@ -4,16 +4,17 @@ apex-backup*
 base*conf
 base-backup-*
 cron*
+httpd.conf.d*
+!httpd.conf.d.public.httpsonly
+!httpd.conf.d.public.httpsonly.norewrite
 labl.d
 motd
+NetworkManager
 openvpn
 opt
 php.ini
 postfix
-NetworkManager
-httpd.conf.d*
-!httpd.conf.d.public.httpsonly
-!httpd.conf.d.public.httpsonly.norewrite
+syslog-ng*
 
 # base installation specific
 account_name
