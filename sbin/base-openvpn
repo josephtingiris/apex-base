@@ -468,12 +468,6 @@ if [ "${Openvpn_Server_Name}" != "" ] || [ ${Base_Openvpn_Generate_Flag} -eq 0 ]
     fi
     source "${Openvpn_Dir_Remote}/vars"
 
-    export Openvpn_Dir_CCD="${Openvpn_Dir_Remote}/ccd"
-    if [ ! -d "${Openvpn_Dir_CCD}" ]; then
-        aborting "${Openvpn_Dir_CCD} openvpn ccd directory not found (create it manually)"
-    fi
-    debugValue Openvpn_Dir_CCD 2
-
     export Openvpn_Dir_PKI="${Openvpn_Dir_Remote}/pki"
     if [ ! -d "${Openvpn_Dir_PKI}" ]; then
         if [ ${Base_Openvpn_Update_Flag} -eq 0 ]; then
