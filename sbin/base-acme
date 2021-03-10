@@ -29,8 +29,8 @@ if [ "$DOMAIN_DIR" == "" ] || [ ! -d "$DOMAIN_DIR" ]; then
         DOMAIN_DIR=""
     fi
     if [ "$DOMAIN_DIR" == "" ] || [ ! -d "$DOMAIN_DIR" ]; then
-        if [ -d /apex/account ] ; then
-            DOMAIN_DIR=$(realpath $(find /apex/account -type d -name "$1") 2> /dev/null | head -1)
+        if [ -d /base/account ] ; then
+            DOMAIN_DIR=$(realpath $(find /base/account -type d -name "$1") 2> /dev/null | head -1)
         fi
     fi
     if [ "$DOMAIN_DIR" == "" ] || [ ! -d "$DOMAIN_DIR" ]; then
@@ -39,8 +39,8 @@ if [ "$DOMAIN_DIR" == "" ] || [ ! -d "$DOMAIN_DIR" ]; then
         fi
     fi
     if [ "$DOMAIN_DIR" == "" ] || [ ! -d "$DOMAIN_DIR" ]; then
-        if [ -d /apex/srv ] ; then
-            DOMAIN_DIR=$(realpath $(find /apex/srv -type d -name "$1") 2> /dev/null | head -1)
+        if [ -d /base/srv ] ; then
+            DOMAIN_DIR=$(realpath $(find /base/srv -type d -name "$1") 2> /dev/null | head -1)
         fi
     fi
 else
