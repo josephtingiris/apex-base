@@ -3,6 +3,7 @@
 function usage() {
     echo
     echo "usage: $0 <yes> [force]"
+    echo
     exit 1
 }
 
