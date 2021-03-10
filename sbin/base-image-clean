@@ -1,0 +1,129 @@
+#!/bin/bash
+
+function usage() {
+    echo
+    echo "usage: $0 <yes> [force]"
+    exit 1
+}
+
+if [ "$1" == "" ]; then
+    usage
+fi
+
+LSB_RELEASE=$(lsb_release -r 2> /dev/null | awk '{print $NF}')
+
+if [[ "${HOSTNAME}" == *ack-* ]]; then
+    Clean_Dirs=()
+    Clean_Dirs+=("/home/jtingiris/.ssh/md5sum")
+    Clean_Dirs+=("/var/log")
+
+    Clean_Files=()
+    Clean_Files+=("$0")
+    Clean_Files+=("/home/jtingiris/.bash_history")
+    Clean_Files+=("/root/.bash_history")
+    Clean_Files+=("/tmp/.viminfo")
+    Clean_Files+=("/tmp/ks-script*")
+    Clean_Files+=("/tmp/client-file-manifest")
+    Clean_Files+=("/tmp/yum_save*")
+    Clean_Files+=("/tmp/yum.log*")
+    Clean_Files+=("/var/tmp/ack*")
+    Clean_Files+=("/var/tmp/*swp")
+
+    Empty_Dirs=()
+    Empty_Dirs+=("/var/lib/NetworkManager")
+
+    Purge_Dirs=()
+    Purge_Dirs+=("/tmp/.subversion")
+    Purge_Dirs+=("/tmp/ssh-*")
+    Purge_Dirs+=("/var/tmp/yum*")
+
+    Here=$(pwd)
+
+    if [[ "${LSB_RELEASE}" == 7* ]]; then
+        echo
+        echo "+ cleaning ${HOSTNAME}, release 7*"
+
+        Empty_Dirs+=("/var/cache/yum")
+        Empty_Dirs+=("/var/lib/yum")
+
+        echo
+        echo "+ cleaning ${HOSTNAME}, yum clean all"
+        yum clean all
+
+    fi
+
+    if [[ "${LSB_RELEASE}" == 8* ]]; then
+        echo
+        echo "+ cleaning ${HOSTNAME}, release 8*"
+
+        Clean_Files+=("/var/lib/dnf/history.sqlite")
+        Clean_Files+=("/var/lib/dnf/history.sqlite-shm")
+        Clean_Files+=("/var/lib/dnf/history.sqlite-wal")
+
+        Empty_Dirs+=("/var/cache/dnf")
+        Empty_Dirs+=("/var/lib/dnf")
+
+        echo
+        echo "+ cleaning ${HOSTNAME}, dnf clean all"
+        dnf clean all
+
+    fi
+
+    echo
+    echo "+ cleaning ${HOSTNAME}"
+
+    # this will remove *everything* including the directory
+    for Purge_Dir in "${Purge_Dirs[@]}"; do
+        for Rm_Dir in ${Purge_Dir}; do
+            if [ -d "${Rm_Dir}" ]; then
+                echo "+ cleaning ${HOSTNAME}, purging directory ${Rm_Dir}"
+                rm -rf "${Rm_Dir}"
+            fi
+        done
+    done
+
+    # this will remove *everything* in the directory
+    for Empty_Dir in "${Empty_Dirs[@]}"; do
+        if [ -d "${Empty_Dir}" ]; then
+            echo "+ cleaning ${HOSTNAME}, emptying directory ${Empty_Dir}"
+            cd "${Empty_Dir}"
+            rm -rf *
+            cd "${Here}"
+        fi
+    done
+
+    # this will remove *only* files in the directory (not sub-directories)
+    for Clean_Dir in "${Clean_Dirs[@]}"; do
+        if [ -d "${Clean_Dir}" ]; then
+            echo "+ cleaning ${HOSTNAME}, directory ${Clean_Dir}"
+            find "${Clean_Dir}" -type f -o -type l | xargs -r rm
+        fi
+    done
+
+    # this will remove *only* the file(s)
+    for Clean_File in "${Clean_Files[@]}"; do
+        for Rm_File in ${Clean_File}; do
+            if [ -e "${Rm_File}" ]; then
+                echo "+ cleaning ${HOSTNAME}, file ${Rm_File}"
+                rm -f "${Rm_File}"
+            fi
+        done
+    done
+
+    if [ -d /etc/sysconfig/network-scripts ]; then
+        while read ifcfg_file; do
+            echo "+ cleaning ${HOSTNAME}, disabling ${ifcfg_file}"
+            sed -i "s/ONBOOT=.*/ONBOOT=no/g" "${ifcfg_file}"
+        done <<< "$(find /etc/sysconfig/network-scripts -name "ifcfg-*" -type f | grep -v ifcfg-lo)"
+    fi
+
+    echo
+    echo -n "halt (y/n) ? "
+    read haltyn
+    if [ "${haltyn}" == "y" ]; then
+        halt --poweroff --force --no-wtmp --no-wall
+    fi
+else
+    echo "- hostname ${HOSTNAME} is not *ack-* (use force?)"
+    exit 1
+fi
