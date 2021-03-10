@@ -13,7 +13,7 @@ fi
 
 LSB_RELEASE=$(lsb_release -r 2> /dev/null | awk '{print $NF}')
 
-if [[ "${HOSTNAME}" == *ack-* ]]; then
+if [[ "${HOSTNAME}" == *ack-* ]] || [ "${2}" == "force" ]; then
     Clean_Dirs=()
     Clean_Dirs+=("/home/jtingiris/.ssh/md5sum")
     Clean_Dirs+=("/var/log")
