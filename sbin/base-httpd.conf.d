@@ -323,7 +323,7 @@ if [ $ARGUMENTS_TOTAL -eq 0 ]; then Usage; fi
 
 Start
 
-Dependency "apachectl apex-data sed svn tr"
+Dependency "apachectl base-data sed svn tr"
 
 # do something
 
@@ -500,9 +500,9 @@ for BASE_VHOST in "${BASE_VHOSTS[@]}"; do
     if [ -r "${BASE_VHOST}/httpd.conf.d.account.custom" ]; then
         BASE_VHOST_ACCOUNT=$(cat "${BASE_VHOST}/httpd.conf.d.account.custom" | grep -v ^# | head -1 | awk '{print $1}')
     else
-        BASE_VHOST_ACCOUNT=$(apex-data "$BASE_VHOST" --account)
+        BASE_VHOST_ACCOUNT=$(base-data "$BASE_VHOST" --account)
         if [ $? -ne 0 ] || [ "$BASE_VHOST_ACCOUNT" == "" ]; then
-            Aborting "apex-data $BASE_VHOST --account failed"
+            Aborting "base-data $BASE_VHOST --account failed"
         fi
     fi
     Debug_Variable BASE_VHOST_ACCOUNT 20
@@ -510,9 +510,9 @@ for BASE_VHOST in "${BASE_VHOSTS[@]}"; do
     if [ -r "${BASE_VHOST}/httpd.conf.d.documentroot.custom" ]; then
         BASE_VHOST_DOCUMENT_ROOT=$(cat "${BASE_VHOST}/httpd.conf.d.documentroot.custom" | grep -v ^# | head -1 | awk '{print $1}')
     else
-        BASE_VHOST_DOCUMENT_ROOT=$(apex-data "$BASE_VHOST" --document-root)
+        BASE_VHOST_DOCUMENT_ROOT=$(base-data "$BASE_VHOST" --document-root)
         if [ $? -ne 0 ] || [ "$BASE_VHOST_DOCUMENT_ROOT" == "" ]; then
-            Aborting "apex-data $BASE_VHOST --document-root failed"
+            Aborting "base-data $BASE_VHOST --document-root failed"
         fi
     fi
     Debug_Variable BASE_VHOST_DOCUMENT_ROOT 20
@@ -520,9 +520,9 @@ for BASE_VHOST in "${BASE_VHOSTS[@]}"; do
     if [ -r "${BASE_VHOST}/httpd.conf.d.name.custom" ]; then
         BASE_VHOST_SERVER_NAME=$(cat "${BASE_VHOST}/httpd.conf.d.name.custom" | grep -v ^# | head -1 | awk '{print $1}')
     else
-        BASE_VHOST_SERVER_NAME=$(apex-data "$BASE_VHOST" --server-name)
+        BASE_VHOST_SERVER_NAME=$(base-data "$BASE_VHOST" --server-name)
         if [ $? -ne 0 ] || [ "$BASE_VHOST_SERVER_NAME" == "" ]; then
-            Aborting "apex-data $BASE_VHOST --server-name failed"
+            Aborting "base-data $BASE_VHOST --server-name failed"
         fi
     fi
     Debug_Variable BASE_VHOST_SERVER_NAME 20
@@ -531,10 +531,10 @@ for BASE_VHOST in "${BASE_VHOSTS[@]}"; do
         if [ -r "${BASE_VHOST}/httpd.conf.d.name.custom" ]; then
             BASE_VHOST_DOMAIN_NAME="${BASE_VHOST_SERVER_NAME#*.}" # everything after the first period
         else
-            BASE_VHOST_DOMAIN_NAME=$(apex-data "$BASE_VHOST" --domain-name)
+            BASE_VHOST_DOMAIN_NAME=$(base-data "$BASE_VHOST" --domain-name)
         fi
         if [ $? -ne 0 ] || [ "$BASE_VHOST_DOMAIN_NAME" == "" ]; then
-            Aborting "apex-data $BASE_VHOST --domain-name failed"
+            Aborting "base-data $BASE_VHOST --domain-name failed"
         fi
     else
         BASE_VHOST_DOMAIN_NAME="$DOMAIN_NAME"
@@ -546,12 +546,12 @@ for BASE_VHOST in "${BASE_VHOSTS[@]}"; do
             BASE_VHOST_PREFIX="${BASE_VHOST_ACCOUNT}.${BASE_VHOST_DOMAIN_NAME}"
             BASE_VHOST_PREFIX+=".src"
         else
-            BASE_VHOST_PREFIX="$(apex-data "$BASE_VHOST" --account).$BASE_VHOST_SERVER_NAME"
+            BASE_VHOST_PREFIX="$(base-data "$BASE_VHOST" --account).$BASE_VHOST_SERVER_NAME"
         fi
     else
-        BASE_VHOST_PREFIX="$(apex-data "$BASE_VHOST" --account).$BASE_VHOST_SERVER_NAME"
+        BASE_VHOST_PREFIX="$(base-data "$BASE_VHOST" --account).$BASE_VHOST_SERVER_NAME"
         if [ $? -ne 0 ] || [ "$BASE_VHOST_PREFIX" == "" ]; then
-            Aborting "apex-data $BASE_VHOST --account failed"
+            Aborting "base-data $BASE_VHOST --account failed"
         fi
     fi
     Debug_Variable BASE_VHOST_PREFIX 9 $BASE_VHOST

@@ -622,8 +622,8 @@ for Vhost in "${Vhosts[@]}"; do
         Vhost_Document_Root=$(cat "${Vhost}/httpd.conf.d.documentroot.custom" | grep -v "^#" | head -1 | awk '{print $1}')
         Vhost=$(dirname "${Vhost_Document_Root}")
     else
-        if type -P apex-data &> /dev/null; then
-            Vhost_Document_Root=$(apex-data -r ${Vhost} 2> /dev/null)
+        if type -P base-data &> /dev/null; then
+            Vhost_Document_Root=$(base-data -r ${Vhost} 2> /dev/null)
         else
             Vhost_Document_Root="${Vhost}/html"
         fi
@@ -665,8 +665,8 @@ for Vhost in "${Vhosts[@]}"; do
 
     debugValue Vhost 3 final
 
-    if type -P apex-data &> /dev/null; then
-        Vhost_Account=$(apex-data -a ${Vhost} 2> /dev/null)
+    if type -P base-data &> /dev/null; then
+        Vhost_Account=$(base-data -a ${Vhost} 2> /dev/null)
     else
         Vhost_Account=$(echo -n "${Vhost}" | awk -F/ '{print $3}')
         if [ "${Vhost_Account}" == "account" ]; then
@@ -691,8 +691,8 @@ for Vhost in "${Vhosts[@]}"; do
         fi
 
         if [ ${#Vhost_Domain_Name} -eq 0 ]; then
-            if type -P apex-data &> /dev/null; then
-                Vhost_Domain_Name=$(apex-data -d ${Vhost} 2> /dev/null)
+            if type -P base-data &> /dev/null; then
+                Vhost_Domain_Name=$(base-data -d ${Vhost} 2> /dev/null)
             else
                 Vhost_Domain_Name="$(basename $(realpath ${Vhost}))"
 
@@ -730,8 +730,8 @@ for Vhost in "${Vhosts[@]}"; do
 
     debugValue Vhost_Document_Root 3
 
-    #if type -P apex-data &> /dev/null; then
-        #Vhost_Prefix=$(apex-data -p ${Vhost} 2> /dev/null)
+    #if type -P base-data &> /dev/null; then
+        #Vhost_Prefix=$(base-data -p ${Vhost} 2> /dev/null)
     #else
         Vhost_Prefix="${Vhost_Account}.${Vhost_Domain_Name}"
     #fi
@@ -765,8 +765,8 @@ for Vhost in "${Vhosts[@]}"; do
     if [ -f "${Vhost_Httpd_Conf_D}.name.custom" ]; then
         Vhost_Server_Name=$(cat "${Vhost_Httpd_Conf_D}.name.custom" | grep -v "^#" | head -1 | awk '{print $1}')
     else
-        if type -P apex-data &> /dev/null; then
-            Vhost_Server_Name=$(apex-data -s ${Vhost} 2> /dev/null)
+        if type -P base-data &> /dev/null; then
+            Vhost_Server_Name=$(base-data -s ${Vhost} 2> /dev/null)
         else
             Vhost_Server_Name="${Vhost_Domain_Name}"
         fi
