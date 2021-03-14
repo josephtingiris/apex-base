@@ -129,6 +129,7 @@ ACME_ARGS+=" --key-file ${CERTIFICATE_DIR}/*.${DOMAIN}.key"
 ACME_ARGS+=" --ca-file ${CERTIFICATE_DIR}/*.${DOMAIN}.ca"
 ACME_ARGS+=" --fullchain-file ${CERTIFICATE_DIR}/*.${DOMAIN}.chain"
 ACME_ARGS+=" --keylength ec-384"
+ACME_ARGS+=" --dnssleep 120"
 ACME_ARGS+=" --force"
 if [ "$Debug" != "" ]; then
     # NOTICE
