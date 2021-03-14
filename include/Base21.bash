@@ -335,7 +335,7 @@ function backupFiles() {
 
     if [ ! -d "${backup_files_directory}" ]; then
         mkdir -p "${backup_files_directory}"
-        if [ $? ne 0 ]; then
+        if [ $? -ne 0 ]; then
             aborting "failed to create backup file directory ${backup_files_directory}" 4
         fi
     fi
@@ -1019,12 +1019,6 @@ dependency ${Base_Dependencies[@]}
 
 if [ "$Base_Account_Dir" == "" ]; then
     Base_Account_Dir="${Base_Dir}/account"
-    if [ ! -d "$Base_Account_Dir" ]; then
-        mkdir -p "$Base_Account_Dir"
-        if [ $? -ne 0 ]; then
-            aborting "failed to create account directory $Base_Account_Dir" 4
-        fi
-    fi
 fi
 
 if [ "$Base_Account" == "" ]; then
