@@ -21,6 +21,8 @@ if [ ! -x "$ACME_SH" ]; then
     exit 1
 fi
 
+DNS_SLEEP=${DNS_SLEEP:-"120"}
+
 DOMAIN_DIR="$1"
 if [ "$DOMAIN_DIR" == "" ] || [ ! -d "$DOMAIN_DIR" ]; then
     DOMAIN_DIR=$(realpath $(pwd))
@@ -81,6 +83,7 @@ if [ "${CHALLENGE_ALIAS}" != "" ]; then
     ACME_ARGS+=" --challenge-alias $CHALLENGE_ALIAS"
 fi
 echo "DOMAIN_DIR        = $DOMAIN_DIR"
+echo "DNS_SLEEP         = $DNS_SLEEP"
 echo "CERTIFICATE_DIR   = $CERTIFICATE_DIR"
 echo "WEBROOT           = $WEBROOT"
 
@@ -129,7 +132,7 @@ ACME_ARGS+=" --key-file ${CERTIFICATE_DIR}/*.${DOMAIN}.key"
 ACME_ARGS+=" --ca-file ${CERTIFICATE_DIR}/*.${DOMAIN}.ca"
 ACME_ARGS+=" --fullchain-file ${CERTIFICATE_DIR}/*.${DOMAIN}.chain"
 ACME_ARGS+=" --keylength ec-384"
-ACME_ARGS+=" --dnssleep 120"
+ACME_ARGS+=" --dnssleep ${DNS_SLEEP}"
 ACME_ARGS+=" --force"
 if [ "$Debug" != "" ]; then
     # NOTICE
