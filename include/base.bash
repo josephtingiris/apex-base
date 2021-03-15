@@ -95,12 +95,6 @@ fi
 
 if [ "$BASE_DIR_ACCOUNT" == "" ]; then
     BASE_DIR_ACCOUNT="$BASE_DIR/account"
-    if [ ! -d "$BASE_DIR_ACCOUNT" ]; then
-        mkdir -p "$BASE_DIR_ACCOUNT"
-        if [ $? -ne 0 ]; then
-            Aborting "failed to create account directory $BASE_DIR_ACCOUNT" 4
-        fi
-    fi
 fi
 
 if [ "$BASE_ACCOUNT" == "" ]; then

@@ -42,11 +42,6 @@ if (empty($USER)) $USER="nobody";
 
 if (empty($BASE_DIR_ACCOUNT)) {
     $BASE_DIR_ACCOUNT="$BASE_DIR/account";
-    if (!is_dir($BASE_DIR_ACCOUNT)) {
-        if (!mkdir($BASE_DIR_ACCOUNT,0750,true)) {
-            Aborting("failed to create account directory $BASE_DIR_ACCOUNT",3);
-        }
-    }
 }
 
 if (empty($BASE_ACCOUNT)) {
