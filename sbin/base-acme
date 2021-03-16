@@ -26,14 +26,14 @@ DNS_SLEEP=${DNS_SLEEP:-"120"}
 DOMAIN_DIR="$1"
 if [ "$DOMAIN_DIR" == "" ] || [ ! -d "$DOMAIN_DIR" ]; then
     DOMAIN_DIR=$(realpath $(pwd))
+
     WEBROOT="${DOMAIN_DIR}/@/html"
     if [ ! -d "$WEBROOT" ]; then
-        DOMAIN_DIR=""
+        WEBROOT="${DOMAIN_DIR}/html"
     fi
-    if [ "$DOMAIN_DIR" == "" ] || [ ! -d "$DOMAIN_DIR" ]; then
-        if [ -d /base/account ] ; then
-            DOMAIN_DIR=$(realpath $(find /base/account -type d -name "$1") 2> /dev/null | head -1)
-        fi
+
+    if [ ! -d "$WEBROOT" ]; then
+        DOMAIN_DIR=""
     fi
     if [ "$DOMAIN_DIR" == "" ] || [ ! -d "$DOMAIN_DIR" ]; then
         if [ -d /base/account ] ; then
@@ -56,12 +56,22 @@ fi
 
 WEBROOT="${DOMAIN_DIR}/@/html"
 if [ ! -d "$WEBROOT" ]; then
+    WEBROOT="${DOMAIN_DIR}/html"
+fi
+
+if [ ! -d "$WEBROOT" ]; then
     echo "aborting, $WEBROOT directory not found"
     exit 1
 fi
 
 CERTIFICATE_DIR="${DOMAIN_DIR}/certificate"
-DOMAIN=$(basename "$DOMAIN_DIR")
+BASE_DOMAIN=$(base-data -d ${DOMAIN_DIR})
+BASE_SERVER_NAME=$(base-data -s ${DOMAIN_DIR})
+if [ "${BASE_DOMAIN}" == "${BASE_SERVER_NAME}" ]; then
+    DOMAIN="${BASE_DOMAIN}"
+else
+    DOMAIN="${BASE_SERVER_NAME}.${BASE_DOMAIN}"
+fi
 
 if [ "$DOMAIN" != "" ]; then
     if [ "$3" != "" ]; then

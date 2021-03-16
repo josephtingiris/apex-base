@@ -231,6 +231,8 @@ baseStart
 
 if [ ${#Input_Dir} -eq 0 ]; then
     Input_Dir=${PWD}
+else
+    Input_Dir="$(readlink -e "${Input_Dir}")"
 fi
 
 debugValue "Base_Dir" 3
@@ -265,8 +267,9 @@ if [[ "${Input_Dir}" == ${Base_Dir}* ]]; then
 
     # base server_name
     Server_Name=${Input_Dir#*${Base_Dir}}
-    if [[ "${Server_Name}" == /account/* ]]; then
+    if [[ "${Server_Name}" == /account/* ]] || [[ "${Server_Name}" == /srv/* ]]; then
         Server_Name=${Server_Name#*/account/}
+        Server_Name=${Server_Name#*/srv/}
         Server_Name=${Server_Name#*/}
         Server_Name="${Server_Name//\// }"
         for Word in ${Server_Name}; do
@@ -343,6 +346,7 @@ unset -v Base_Server_Name Skip Word
 if [ ${#Document_Root} -eq 0 ]; then
     Document_Root="${Input_Dir}/html"
     Document_Root=${Document_Root//\/\//\/}
+    Document_Root="$(readlink -e "${Document_Root}")"
 fi
 
 # empty prefix
