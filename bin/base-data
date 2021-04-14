@@ -229,26 +229,24 @@ baseStart
 # evaluate input directory
 #
 
+debugValue "Base_Dir" 3
+
 if [ ${#Input_Dir} -eq 0 ]; then
-    Input_Dir=${PWD}
+    Input_Dir=$(pwd)
 else
-    Input_Dir="$(readlink -e "${Input_Dir}")"
+    if [ -d "${Input_Dir}" ]; then
+        Input_Dir="$(readlink -e "${Input_Dir}")"
+    fi
 fi
 
-debugValue "Base_Dir" 3
 debugValue "Input_Dir" 3
+
+if [ "${Input_Dir}" == "" ]; then
+    aborting "failed to determine Input_Dir"
+fi
 
 if [[ "${Input_Dir}" == ${Base_Dir}* ]]; then
     debug "${Input_Dir} starts with ${Base_Dir}" 4
-
-    # base account name
-    Account=${Input_Dir#*${Base_Dir}}
-    if [[ "${Account}" == /account/* ]]; then
-        Account=${Account#*/account/}
-        Account=${Account%%/*}
-    else
-        Account="${Base_Dir##*/}"
-    fi
 
     # base domain name
     Domain_Name=${Input_Dir#*${Base_Dir}}
@@ -264,23 +262,51 @@ if [[ "${Input_Dir}" == ${Base_Dir}* ]]; then
             Domain_Name=""
         fi
     fi
+    debugValue Domain_Name 7 "0"
+
+    # base account name
+    Account=${Input_Dir#*${Base_Dir}}
+    if [[ "${Account}" == /account/* ]]; then
+        debugValue Account 7 "0"
+        Account=${Account#*/account/}
+        Account=${Account%%/*}
+    else
+        if [[ "${Account}" == /srv/* ]]; then
+            Account=${Account#*/srv/}
+            Account=${Account%%/*}
+        else
+            Account="${Base_Dir##*/}"
+        fi
+    fi
+    if [ "${Account}" == "${Domain_Name}" ]; then
+        Account="${Base_Dir##*/}"
+    fi
+    debugValue Account 7 "0"
 
     # base server_name
     Server_Name=${Input_Dir#*${Base_Dir}}
+    debugValue Server_Name 7 "0"
     if [[ "${Server_Name}" == /account/* ]] || [[ "${Server_Name}" == /srv/* ]]; then
         Server_Name=${Server_Name#*/account/}
         Server_Name=${Server_Name#*/srv/}
         Server_Name=${Server_Name#*/}
         Server_Name="${Server_Name//\// }"
         for Word in ${Server_Name}; do
-            Reverse="${Word} ${Reverse}"
+            if [ "${Word}" != "${Account}" ]; then
+                Reverse="${Word} ${Reverse}"
+            fi
         done
+        if [[ "${Reverse}" != *${Domain_Name}$ ]]; then
+            if [[ "${Reverse}" != *\ ${Domain_Name}* ]]; then
+                Reverse+=" ${Domain_Name}"
+            fi
+        fi
         Server_Name=${Reverse}
         unset -v Reverse Word
     else
-            Server_Name=""
+        Server_Name=""
     fi
-
+    debugValue Server_Name 7 "1"
 fi
 
 # empty account
@@ -312,7 +338,10 @@ if [ ${#Server_Name} -eq 0 ]; then
         else
             Server_Name=${Input_Dir##*/}.${Domain_Name}
         fi
+    else
+        Server_Name="${Input_Dir}"
     fi
+    debugValue Server_Name 5 "2"
 fi
 
 # final server name
@@ -337,16 +366,16 @@ for Word in ${Server_Name}; do
     fi
 done
 Server_Name=${Base_Server_Name//../.}
-#if [[ ${Server_Name} =~ ^. ]]; then
-#Server_Name=${Server_Name/./}
-#fi
+debugValue Server_Name 5 "3"
 unset -v Base_Server_Name Skip Word
 
 # empty document root
 if [ ${#Document_Root} -eq 0 ]; then
     Document_Root="${Input_Dir}/html"
     Document_Root=${Document_Root//\/\//\/}
-    Document_Root="$(readlink -e "${Document_Root}")"
+    if [ -d "${Document_Root}" ] ;then
+        Document_Root="$(readlink -e "${Document_Root}")"
+    fi
 fi
 
 # empty prefix
