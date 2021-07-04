@@ -165,5 +165,6 @@ ACME_RC=$?
 
 if [ $ACME_RC -eq 0 ]; then
     cd "${CERTIFICATE_DIR}"
+    cat "${CERTIFICATE_DIR}/*.${DOMAIN}.chain" "${CERTIFICATE_DIR}/*.${DOMAIN}.crt" > "${CERTIFICATE_DIR}/*.${DOMAIN}.chain.crt"
     svn commit -m "certificates updated via $0"
 fi

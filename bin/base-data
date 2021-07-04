@@ -293,12 +293,16 @@ if [[ "${Input_Dir}" == ${Base_Dir}* ]]; then
         Server_Name="${Server_Name//\// }"
         for Word in ${Server_Name}; do
             if [ "${Word}" != "${Account}" ]; then
-                Reverse="${Word} ${Reverse}"
+                if [ "${Word}" != "${Domain_Name}" ]; then
+                    Reverse="${Word} ${Reverse}"
+                fi
             fi
         done
-        if [[ "${Reverse}" != *${Domain_Name}$ ]]; then
-            if [[ "${Reverse}" != *\ ${Domain_Name}* ]]; then
-                Reverse+=" ${Domain_Name}"
+        if [[ "${Reverse}" != "${Domain_Name}" ]]; then
+            if [[ "${Reverse}" != *${Domain_Name}$ ]]; then
+                if [[ "${Reverse}" != *\ ${Domain_Name}* ]]; then
+                    Reverse+=" ${Domain_Name}"
+                fi
             fi
         fi
         Server_Name=${Reverse}
